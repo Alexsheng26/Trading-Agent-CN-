@@ -1,0 +1,10 @@
+# 统一用 LF：本仓库会在 Windows 上克隆，但构建成 Linux 容器运行。
+# CRLF 混进容器会引发难查的问题（脚本无法执行、.env 值尾部带 \r 等）。
+* text=auto eol=lf
+
+# 二进制文件不做转换
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary

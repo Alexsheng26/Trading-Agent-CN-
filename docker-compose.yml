@@ -7,10 +7,11 @@ services:
     build: ./backend
     env_file: .env
     environment:
-      # 容器内用挂载卷里的 SQLite；要用 Postgres 就在 .env 里覆盖 DATABASE_URL
-      DATABASE_URL: ${DATABASE_URL:-sqlite+aiosqlite:////app/data/trading_agent.db}
-      # 允许前端容器和局域网访问
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      # 容器里固定用挂载卷中的 SQLite（绝对路径）。
+      # 刻意不复用 .env 里的 DATABASE_URL —— 那个是给"原生运行"准备的相对路径，
+      # 两种语义混用会让人搞不清数据库到底落在哪。
+      # 要换 Postgres，在 .env 里设 DOCKER_DATABASE_URL 覆盖这一项。
+      DATABASE_URL: ${DOCKER_DATABASE_URL:-sqlite+aiosqlite:////app/data/trading_agent.db}
     volumes:
       - ./data:/app/data
     ports:

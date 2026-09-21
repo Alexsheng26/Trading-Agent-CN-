@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     # 模型因安全策略拒答时，让服务端自动换一个模型跑完同一请求
     anthropic_refusal_fallback: bool = True
 
+    # 离线桩每段输出之间的间隔（秒）。设成 0.03 左右能看到打字机效果，
+    # 首次体验和调前端动效时有用；跑测试时保持 0 以免拖慢。
+    echo_delay: float = 0.0
+
     openai_compat_base_url: str = "https://api.deepseek.com/v1"
     openai_compat_api_key: str = ""
     openai_compat_model: str = "deepseek-chat"

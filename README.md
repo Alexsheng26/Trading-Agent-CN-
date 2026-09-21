@@ -23,6 +23,9 @@ make dev
 
 打开 <http://localhost:3000>，整条链路（数据 → 智能体 → 决策 → 界面）立刻可跑。
 
+> **Windows 用户**：`make` 命令默认不存在，请按
+> [docs/SETUP-Windows.md](docs/SETUP-Windows.md) 走 Docker 方案（更省事）。
+
 **离线桩模式**下用的是模板化的占位分析和程序生成的模拟行情，**结论无任何参考价值**，作用是让你先看清系统长什么样。要跑真实分析，编辑 `.env`：
 
 ```bash
@@ -35,15 +38,17 @@ DATA_PROVIDER_ORDER=akshare,tushare   # AKShare 免费免注册，够用
 
 ### 在手机上用
 
-1. 确保手机和电脑在同一局域网
-2. 查到电脑 IP（`ipconfig` / `ifconfig`），把它加进 `.env` 的 `CORS_ORIGINS`：
-   ```
-   CORS_ORIGINS=http://localhost:3000,http://192.168.1.8:3000
-   ```
-3. 手机浏览器打开 `http://192.168.1.8:3000`
+1. 确保手机和电脑连的是同一个 Wi-Fi
+2. 查到电脑的局域网 IP（Windows 用 `ipconfig`，Mac/Linux 用 `ifconfig`）
+3. 手机浏览器打开 `http://<电脑IP>:3000`，例如 `http://192.168.1.8:3000`
 4. **iPhone**：Safari → 分享 → 添加到主屏幕　**Android**：Chrome → 菜单 → 安装应用
 
 装好后全屏运行，和原生 App 观感一致。
+
+> 不需要改 `CORS_ORIGINS`。浏览器只访问前端（`:3000`），由 Next 在**服务端**
+> 代理到后端，浏览器从不直接请求 `:8000`，因此不涉及跨域。
+> Windows 用户可能需要在防火墙里放行 3000 端口，见
+> [docs/SETUP-Windows.md](docs/SETUP-Windows.md)。
 
 ---
 

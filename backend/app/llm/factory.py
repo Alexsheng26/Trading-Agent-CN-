@@ -39,7 +39,7 @@ def build_llm(settings: Settings | None = None) -> LLMClient:
                 "LLM_PROVIDER=echo —— 使用离线桩模型，输出无分析价值。"
                 "要跑真实分析请配置 ANTHROPIC_API_KEY 并设 LLM_PROVIDER=anthropic"
             )
-            return EchoLLM()
+            return EchoLLM(delay=settings.echo_delay)
         case other:  # pragma: no cover - pydantic 已经校验过
             raise LLMError(f"未知的 LLM_PROVIDER：{other}")
 
