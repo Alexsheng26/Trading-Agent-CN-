@@ -25,7 +25,10 @@ RUN mkdir -p /app/data
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+# 探测间隔刻意设小：容器刚起来时要尽快确认可用，
+# 否则 compose 的 depends_on(service_healthy) 要干等一个 interval。
+# start-period 给足 60 秒 —— 首次启动要建数据库表，慢一点是正常的。
+HEALTHCHECK --interval=5s --timeout=5s --start-period=60s --retries=6 \
     CMD curl -fsS http://localhost:8000/api/v1/health || exit 1
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
