@@ -285,6 +285,28 @@ docker compose logs -f backend
 - `触发 Claude 速率限制` → 新账户额度低，在 `.env` 里设 `DEBATE_ROUNDS=1` 降低并发
 - `分析超时` → 在 `.env` 里把 `ANALYSIS_TIMEOUT` 调大，比如 `900`
 
+### 构建前端时报 `pnpm install --frozen-lockfile` 失败
+如果报错里提到 `minimumReleaseAge` 或 `the active policies reject`，说明你的 pnpm
+版本比 lockfile 的生成版本新，新版有个"拒绝刚发布不久的包"的供应链策略。
+
+本项目已经在 `frontend/package.json` 里钉住了 `packageManager: pnpm@10.33.0`，
+Docker 构建会自动用这个版本，正常不该再遇到。若还是遇到：
+
+```powershell
+# 让 Docker 不用缓存重新构建前端
+docker compose build --no-cache frontend
+docker compose up -d
+```
+
+实在不行，重建 lockfile（需要本机装 Node 和 pnpm）：
+```powershell
+cd frontend
+pnpm clean --lockfile
+pnpm install
+cd ..
+docker compose up -d --build
+```
+
 ### `.env` 改了没生效
 - 确认文件名是 `.env` 不是 `.env.txt`：`dir .env`
 - 确认改完执行了 `docker compose up -d`
@@ -302,14 +324,30 @@ docker compose down
 docker compose up -d --build
 ```
 
-> 注意：自选股和历史分析记录存在项目文件夹的 `data\` 目录里（是**目录挂载**，
-> 不是 Docker 数据卷），所以 `docker compose down -v` **清不掉它们**。
-> 真要清空数据，手动删掉那个目录：
-> ```powershell
-> docker compose down
-> Remove-Item -Recurse -Force data
-> docker compose up -d
-> ```
+这样重建镜像但**保留数据**（自选股、历史分析记录）。
+
+连数据一起清空：
+```powershell
+docker compose down -v
+docker compose up -d --build
+```
+`-v` 会删掉存数据的命名卷，自选股和历史分析全部清空，不可恢复。
+
+### 想备份数据 / 看一眼数据库文件
+
+数据存在 Docker 的**命名卷**里，不在项目文件夹中（这是故意的：Windows 上
+把宿主目录挂进 Linux 容器要过一层文件系统转换，SQLite 的文件锁在那层上
+容易出问题）。要取出来：
+
+```powershell
+docker compose cp backend:/app/data/trading_agent.db .\backup.db
+```
+
+放回去：
+```powershell
+docker compose cp .\backup.db backend:/app/data/trading_agent.db
+docker compose restart backend
+```
 
 ---
 

@@ -31,9 +31,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # 不写 version：让它读 frontend/package.json 的 packageManager 字段，
+      # 保证 CI、Docker、本地开发用的是同一个 pnpm 版本
       - uses: pnpm/action-setup@v4
         with:
-          version: 10
+          package_json_file: frontend/package.json
       - uses: actions/setup-node@v4
         with:
           node-version: "22"

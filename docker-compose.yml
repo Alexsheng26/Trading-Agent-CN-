@@ -13,7 +13,13 @@ services:
       # 要换 Postgres，在 .env 里设 DOCKER_DATABASE_URL 覆盖这一项。
       DATABASE_URL: ${DOCKER_DATABASE_URL:-sqlite+aiosqlite:////app/data/trading_agent.db}
     volumes:
-      - ./data:/app/data
+      # 用命名卷而不是 ./data 目录挂载。
+      # 原因：Windows 上 Docker Desktop 把宿主目录挂进 Linux 容器要经过一层
+      # 文件系统转换，SQLite 的文件锁在这层上容易出问题（database is locked
+      # 甚至库损坏）。命名卷落在 WSL2 虚拟机的原生文件系统里，没有这个问题，
+      # 读写也更快。代价是不能直接用资源管理器翻看 db 文件 ——
+      # 需要时用 `docker compose cp backend:/app/data/trading_agent.db .` 取出来。
+      - app-data:/app/data
     ports:
       - "8000:8000"
     restart: unless-stopped
@@ -40,5 +46,6 @@ services:
   #     - pgdata:/var/lib/postgresql/data
   #   restart: unless-stopped
 
-# volumes:
-#   pgdata:
+volumes:
+  app-data:
+  # pgdata:
