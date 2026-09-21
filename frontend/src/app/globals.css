@@ -1,0 +1,142 @@
+@import "tailwindcss";
+
+/*
+ * 配色说明：A股是「红涨绿跌」，与欧美市场相反。
+ * --up 用红、--down 用绿，全站统一走这两个变量，不要在组件里硬编码颜色。
+ */
+:root {
+  --bg: #0b0e14;
+  --surface: #141922;
+  --surface-2: #1c2230;
+  --border: #262d3d;
+  --text: #e6e9ef;
+  --muted: #8b93a7;
+
+  --up: #f0554d;        /* 涨：红 */
+  --up-soft: #2a1618;
+  --down: #29b57e;      /* 跌：绿 */
+  --down-soft: #10241d;
+  --flat: #8b93a7;
+
+  --accent: #5b8def;
+  --accent-soft: #14203a;
+  --warn: #e0a339;
+  --warn-soft: #2a2113;
+
+  /* 安全区：iPhone 底部小黑条 */
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f6f7f9;
+    --surface: #ffffff;
+    --surface-2: #f0f2f5;
+    --border: #e1e4ea;
+    --text: #1a1d24;
+    --muted: #6b7280;
+    --up: #d9342b;
+    --up-soft: #fdeceb;
+    --down: #12945f;
+    --down-soft: #e8f6f0;
+    --flat: #6b7280;
+    --accent: #2f6fe4;
+    --accent-soft: #eaf1fd;
+    --warn: #b4790f;
+    --warn-soft: #fdf4e3;
+  }
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+body {
+  font-family:
+    -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  /* 手机上不允许横向滚动 */
+  overflow-x: hidden;
+}
+
+/* 数字统一用等宽，行情表格才不会跳动 */
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* 隐藏滚动条但保留滚动能力（横向标签栏用） */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* 流式输出时的光标 */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.streaming-cursor::after {
+  content: "▋";
+  margin-left: 2px;
+  animation: blink 1s step-end infinite;
+  color: var(--accent);
+}
+
+/* Markdown 正文排版 —— 用 Tailwind 的 typography 插件会多一个依赖，这里手写够用 */
+.md :where(h1, h2, h3, h4) {
+  font-weight: 600;
+  margin: 1em 0 0.5em;
+  line-height: 1.4;
+}
+.md :where(h1) { font-size: 1.15rem; }
+.md :where(h2) { font-size: 1.05rem; }
+.md :where(h3) { font-size: 0.98rem; }
+.md p { margin: 0.6em 0; line-height: 1.75; }
+.md :where(ul, ol) { margin: 0.6em 0; padding-left: 1.3em; }
+.md li { margin: 0.3em 0; line-height: 1.7; }
+.md ul { list-style: disc; }
+.md ol { list-style: decimal; }
+.md strong { font-weight: 600; color: var(--text); }
+.md code {
+  background: var(--surface-2);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+.md blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 0.9em;
+  margin: 0.7em 0;
+  color: var(--muted);
+}
+.md table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.8em 0;
+  font-size: 0.85rem;
+  display: block;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.md :where(th, td) {
+  border: 1px solid var(--border);
+  padding: 0.4em 0.6em;
+  text-align: right;
+}
+.md th {
+  background: var(--surface-2);
+  font-weight: 600;
+  text-align: center;
+}
+.md td:first-child, .md th:first-child { text-align: left; }
+.md hr { border: 0; border-top: 1px solid var(--border); margin: 1em 0; }

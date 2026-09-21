@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="A股投研助手">
+  <rect width="512" height="512" rx="112" fill="#0b0e14"/>
+  <!-- K线：红涨绿跌，与 A 股习惯一致 -->
+  <g stroke-linecap="round">
+    <line x1="140" y1="300" x2="140" y2="392" stroke="#29b57e" stroke-width="18"/>
+    <rect x="122" y="318" width="36" height="58" rx="6" fill="#29b57e"/>
+    <line x1="228" y1="196" x2="228" y2="356" stroke="#f0554d" stroke-width="18"/>
+    <rect x="210" y="228" width="36" height="98" rx="6" fill="#f0554d"/>
+    <line x1="316" y1="140" x2="316" y2="300" stroke="#f0554d" stroke-width="18"/>
+    <rect x="298" y="164" width="36" height="106" rx="6" fill="#f0554d"/>
+  </g>
+  <!-- 趋势线 -->
+  <path d="M110 372 L196 292 L284 224 L392 148" fill="none" stroke="#5b8def" stroke-width="16"
+        stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/>
+  <circle cx="392" cy="148" r="22" fill="#5b8def"/>
+</svg>

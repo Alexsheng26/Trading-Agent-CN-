@@ -1,0 +1,43 @@
+# 一键起全套：docker compose up -d
+# 浏览器打开 http://localhost:3000
+# 手机在同一局域网访问 http://<这台机器的IP>:3000
+
+services:
+  backend:
+    build: ./backend
+    env_file: .env
+    environment:
+      # 容器内用挂载卷里的 SQLite；要用 Postgres 就在 .env 里覆盖 DATABASE_URL
+      DATABASE_URL: ${DATABASE_URL:-sqlite+aiosqlite:////app/data/trading_agent.db}
+      # 允许前端容器和局域网访问
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://backend:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # 需要 PostgreSQL 时取消注释，并在 .env 里设：
+  # DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/trading_agent
+  # postgres:
+  #   image: postgres:17-alpine
+  #   environment:
+  #     POSTGRES_PASSWORD: postgres
+  #     POSTGRES_DB: trading_agent
+  #   volumes:
+  #     - pgdata:/var/lib/postgresql/data
+  #   restart: unless-stopped
+
+# volumes:
+#   pgdata:
