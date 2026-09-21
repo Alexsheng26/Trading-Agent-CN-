@@ -1,4 +1,9 @@
-# Python
+# ⚠️ 重要：不带前导斜杠的规则会匹配**任意层级**的同名目录。
+# 例如 `data/` 会把 backend/app/data/ 这样的源码目录也一起忽略掉 ——
+# 本项目真的踩过这个坑，整个数据层没被提交，本地一切正常但发布包起不来。
+# 所以凡是只想忽略特定位置的，一律写成 `/path/` 形式锚定。
+
+# ---------- Python ----------
 __pycache__/
 *.py[cod]
 .venv/
@@ -7,30 +12,37 @@ venv/
 .ruff_cache/
 .mypy_cache/
 *.egg-info/
-dist/
-build/
 
-# Node
+# ---------- Node ----------
 node_modules/
 .next/
-out/
 .turbo/
 *.tsbuildinfo
+/frontend/out/
 
-# 环境变量与密钥（绝对不要提交）
+# ---------- 构建产物（锚定到具体位置，避免误伤同名源码目录）----------
+/dist/
+/build/
+/backend/dist/
+/backend/build/
+/frontend/dist/
+/frontend/build/
+
+# ---------- 环境变量与密钥（绝对不要提交）----------
 .env
 .env.local
 .env.*.local
 
-# 数据与缓存
-data/
+# ---------- 运行时数据（同样锚定）----------
+/data/
+/backend/data/
 *.db
 *.sqlite3
-.cache/
-logs/
+/.cache/
+/logs/
 *.log
 
-# 编辑器 / 系统
+# ---------- 编辑器 / 系统 ----------
 .vscode/
 .idea/
 .DS_Store
