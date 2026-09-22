@@ -52,6 +52,26 @@ class IndexQuoteOut(BaseModel):
     change_pct: float | None = None
 
 
+class FibLevelOut(BaseModel):
+    ratio: float
+    label: str
+    price: float
+    kind: str  # swing | retracement | extension
+
+
+class FibAnalysisOut(BaseModel):
+    direction: str  # 上升 | 下降
+    swing_high: float
+    swing_low: float
+    swing_high_date: date | None = None
+    swing_low_date: date | None = None
+    lookback: int = 0
+    retracement_pct: float | None = None
+    levels: list[FibLevelOut] = Field(default_factory=list)
+    nearest_support: FibLevelOut | None = None
+    nearest_resistance: FibLevelOut | None = None
+
+
 class IndicatorsOut(BaseModel):
     """技术指标快照，字段与 IndicatorSnapshot 对应。"""
 
@@ -81,6 +101,7 @@ class IndicatorsOut(BaseModel):
     return_60d: float | None = None
     volatility_20d: float | None = None
     volume_ratio_5_20: float | None = None
+    fib: FibAnalysisOut | None = None
     patterns: list[str] = Field(default_factory=list)
 
 

@@ -161,7 +161,10 @@ def normalize(raw: str) -> Symbol:
 
     inferred = _infer_exchange(code)
     if inferred is None:
-        raise SymbolError(f"无法从代码 {code} 推断交易所，请显式写成 {code}.SH / {code}.SZ / {code}.BJ")
+        raise SymbolError(
+            f"无法从代码 {code} 推断交易所，"
+            f"请显式写成 {code}.SH / {code}.SZ / {code}.BJ"
+        )
     return Symbol(code=code, exchange=inferred)
 
 

@@ -65,6 +65,7 @@ class AnalysisContext:
             self._header(),
             self._quote_section(),
             self._indicator_section(),
+            self._fib_section(),
             self._price_history_section(),
             self._financial_section(),
             self._money_flow_section(),
@@ -137,6 +138,73 @@ class AnalysisContext:
             f"- 20日年化波动率：{_num(i.volatility_20d)}%",
             f"- 量比(5日/20日均量)：{_num(i.volume_ratio_5_20)}",
             f"- 形态：{'、'.join(i.patterns) if i.patterns else '无明显形态'}",
+        ]
+        return "\n".join(lines)
+
+    def _fib_section(self) -> str:
+        """斐波那契回撤。
+
+        重点是把"方向"和"当前价处在哪两条位之间"讲清楚 ——
+        只给一串价位，模型很容易把支撑说成阻力。
+        """
+        fib = self.indicators.fib
+        if fib is None:
+            return ""
+
+        close = self.indicators.close
+        lines = [
+            f"## 斐波那契回撤（近 {fib.lookback} 个交易日摆动区间）",
+            "",
+            f"- 摆动方向：**{fib.direction}段**"
+            + (
+                f"（低点 {fib.swing_low} @ {fib.swing_low_date} → "
+                f"高点 {fib.swing_high} @ {fib.swing_high_date}）"
+                if fib.direction == "上升"
+                else f"（高点 {fib.swing_high} @ {fib.swing_high_date} → "
+                f"低点 {fib.swing_low} @ {fib.swing_low_date}）"
+            ),
+            f"- 当前已回撤：{_num(fib.retracement_pct)}%"
+            "（0% = 仍在该段末端，100% = 已回到该段起点）",
+        ]
+        if fib.nearest_support:
+            lines.append(
+                f"- 下方最近关键位：{fib.nearest_support.label} "
+                f"= {fib.nearest_support.price}"
+            )
+        if fib.nearest_resistance:
+            lines.append(
+                f"- 上方最近关键位：{fib.nearest_resistance.label} "
+                f"= {fib.nearest_resistance.price}"
+            )
+
+        lines += ["", "| 比例 | 价位 | 类型 | 相对当前价 |", "| --- | --- | --- | --- |"]
+        for lv in fib.levels:
+            if close:
+                delta = (lv.price / close - 1) * 100
+                rel = f"{delta:+.2f}%"
+            else:
+                rel = "—"
+            kind_cn = {
+                "swing": "摆动端点",
+                "retracement": "回撤位",
+                "extension": "扩展目标",
+            }[lv.kind]
+            lines.append(f"| {lv.label} | {lv.price} | {kind_cn} | {rel} |")
+
+        lines += [
+            "",
+            "说明：摆动端点取的是窗口内最高/最低价，会随新极值自动滚动，"
+            "因此回撤率恒在 0~100% 之间 —— 判断是否突破区间请看"
+            "「接近 60 日新高/新低」这类标签，不要从回撤率去推。",
+            "",
+            "读法提醒："
+            + (
+                "这是一段上涨后的回撤，回撤位在高点下方，起支撑作用；"
+                "扩展位在高点上方，是继续上攻时的目标。"
+                if fib.direction == "上升"
+                else "这是一段下跌后的反弹，回撤位在低点上方，起阻力作用；"
+                "扩展位在低点下方，是继续下跌时的目标。"
+            ),
         ]
         return "\n".join(lines)
 

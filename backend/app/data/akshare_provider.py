@@ -132,7 +132,9 @@ class AkshareProvider:
         df = await self._spot()
         match = df[df["代码"].astype(str).str.zfill(6) == symbol.code]
         if match.empty:
-            raise ProviderUnavailable(f"akshare 实时行情里没有 {symbol.canonical}（可能停牌或已退市）")
+            raise ProviderUnavailable(
+                f"akshare 实时行情里没有 {symbol.canonical}（可能停牌或已退市）"
+            )
         row = match.iloc[0]
         return Quote(
             symbol=symbol.canonical,

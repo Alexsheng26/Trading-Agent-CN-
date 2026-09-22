@@ -4,9 +4,20 @@
 // 注意：A股红涨绿跌，所以 upColor 是红、downColor 是绿。
 
 import { useEffect, useRef } from "react";
-import type { Bar } from "@/lib/types";
+import type { Bar, FibAnalysis } from "@/lib/types";
 
-export function PriceChart({ bars, height = 260 }: { bars: Bar[]; height?: number }) {
+export function PriceChart({
+  bars,
+  fib,
+  showFib = false,
+  height = 260,
+}: {
+  bars: Bar[];
+  fib?: FibAnalysis | null;
+  /** 是否在图上叠加斐波那契价位线 */
+  showFib?: boolean;
+  height?: number;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -80,6 +91,40 @@ export function PriceChart({ bars, height = 260 }: { bars: Bar[]; height?: numbe
         })),
       );
 
+      // 斐波那契价位线。
+      // 刻意只画回撤位和摆动端点 —— 扩展位（如 261.8%）远在数据区间之外，
+      // 画上去会把纵轴拉扁，K 线全挤成一条。扩展位在下方的面板里用文字给出。
+      if (showFib && fib) {
+        const accent = v("--accent") || "#5b8def";
+        const muted = v("--muted") || "#8b93a7";
+
+        // 标签策略：7 条线全画（提供视觉参照），但只给 4 条打价格轴徽标 ——
+        // 两个摆动端点（在图的上下两端，位置远）+ 紧贴现价的支撑和阻力
+        // （当下真正要用的两条）。
+        // 全部打徽标的话，中间几条会和现价徽标、轴刻度糊成一片，手机上没法看；
+        // 全部不打则失去标识，线就没意义了。lightweight-charts 的 title
+        // 也依赖 axisLabelVisible，关掉徽标等于连线名一起没了。
+        const labelled = new Set(
+          [fib.nearest_support?.price, fib.nearest_resistance?.price].filter(
+            (x): x is number => typeof x === "number",
+          ),
+        );
+
+        for (const level of fib.levels) {
+          if (level.kind === "extension") continue;
+          const isSwing = level.kind === "swing";
+          const isAdjacent = labelled.has(level.price);
+          candles.createPriceLine({
+            price: level.price,
+            color: isSwing ? muted : accent,
+            lineWidth: isAdjacent ? 2 : 1,
+            lineStyle: isSwing ? 0 : 2, // 0=实线（端点），2=虚线（回撤位）
+            axisLabelVisible: isSwing || isAdjacent,
+            title: level.label,
+          });
+        }
+      }
+
       chart.timeScale().fitContent();
 
       // 容器宽度变化时（转屏、侧边栏展开）跟着重排
@@ -98,7 +143,7 @@ export function PriceChart({ bars, height = 260 }: { bars: Bar[]; height?: numbe
       disposed = true;
       cleanup?.();
     };
-  }, [bars, height]);
+  }, [bars, height, fib, showFib]);
 
   if (bars.length === 0) {
     return (

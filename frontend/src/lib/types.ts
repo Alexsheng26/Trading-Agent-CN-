@@ -43,6 +43,30 @@ export interface Bar {
   change_pct?: number | null;
 }
 
+export type FibKind = "swing" | "retracement" | "extension";
+
+export interface FibLevel {
+  ratio: number;
+  label: string;
+  price: number;
+  kind: FibKind;
+}
+
+export interface FibAnalysis {
+  /** 上升 = 先低后高（回撤位是支撑）；下降 = 先高后低（回撤位是阻力） */
+  direction: "上升" | "下降";
+  swing_high: number;
+  swing_low: number;
+  swing_high_date?: string | null;
+  swing_low_date?: string | null;
+  lookback: number;
+  /** 恒在 0-100：摆动端点即窗口极值，现价必然落在其间 */
+  retracement_pct?: number | null;
+  levels: FibLevel[];
+  nearest_support?: FibLevel | null;
+  nearest_resistance?: FibLevel | null;
+}
+
 export interface Indicators {
   close?: number | null;
   ma5?: number | null;
@@ -70,6 +94,7 @@ export interface Indicators {
   return_60d?: number | null;
   volatility_20d?: number | null;
   volume_ratio_5_20?: number | null;
+  fib?: FibAnalysis | null;
   patterns: string[];
 }
 

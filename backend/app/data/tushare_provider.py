@@ -290,7 +290,10 @@ class TushareProvider:
             "tushare:stock_basic_all",
             ttl,
             lambda: self._call(
-                "stock_basic", exchange="", list_status="L", fields="ts_code,name,industry,list_date"
+                "stock_basic",
+                exchange="",
+                list_status="L",
+                fields="ts_code,name,industry,list_date",
             ),
         )
 

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 
 from app.data.base import Bar
 
@@ -164,6 +165,129 @@ def atr(bars: list[Bar], period: int = 14) -> list[float | None]:
     return out
 
 
+# ---------------------------------------------------------------- 斐波那契
+
+# 回撤比例。0.5 与 2.0 严格来说不是斐波那契数列比值，
+# 但国内外看盘软件都会带上，实际交易中也确实被当作关键位，所以保留。
+_FIB_RETRACEMENTS: tuple[float, ...] = (0.236, 0.382, 0.5, 0.618, 0.786)
+# 扩展比例，用于顺势的目标位
+_FIB_EXTENSIONS: tuple[float, ...] = (1.272, 1.618, 2.618)
+
+
+@dataclass(slots=True)
+class FibLevel:
+    """一条斐波那契价位。"""
+
+    ratio: float  # 0.382
+    label: str  # "38.2%"
+    price: float
+    #: swing=摆动端点 / retracement=回撤位 / extension=扩展目标位
+    kind: str
+
+
+@dataclass(slots=True)
+class FibAnalysis:
+    """斐波那契回撤分析结果。"""
+
+    #: 最近一段摆动的方向：上升 = 先低后高，下降 = 先高后低
+    direction: str
+    swing_high: float
+    swing_low: float
+    swing_high_date: date | None = None
+    swing_low_date: date | None = None
+    lookback: int = 0
+    #: 当前价相对这段摆动已回撤的百分比，恒在 0~100 之间。
+    #: 之所以不会越界：摆动端点取的就是窗口内的最高/最低价，
+    #: 现价必然落在两者之间。价格一旦创出新极值，该极值就成为新的摆动端点，
+    #: 方向也会随之翻转 —— 所以"突破摆动区间"这件事要看
+    #: `IndicatorSnapshot.pct_from_high_60` 与 60 日新高/新低标签，
+    #: 不要指望从这个字段读出来。
+    retracement_pct: float | None = None
+    levels: list[FibLevel] = field(default_factory=list)
+    #: 当前价下方最近的斐波那契位（潜在支撑）
+    nearest_support: FibLevel | None = None
+    #: 当前价上方最近的斐波那契位（潜在阻力）
+    nearest_resistance: FibLevel | None = None
+
+
+def fib_analysis(bars: list[Bar], lookback: int = 60) -> FibAnalysis | None:
+    """按最近 `lookback` 根 K 线的摆动区间计算斐波那契位。
+
+    摆动点取法：窗口内的最高价与最低价。两者的**先后顺序**决定方向 ——
+    低点在前、高点在后，说明这是一段上涨，回撤位在高点下方充当支撑；
+    反之是一段下跌，回撤位在低点上方充当阻力。
+    方向判反的话支撑阻力会完全颠倒，所以这一步比算比例重要得多。
+
+    这是"自动斐波那契"的常见做法（端点随窗口滚动），优点是无需人工挑摆动点、
+    始终反映最近的结构；代价是端点会随新极值移动，因此价格不会"跌破"这组位 ——
+    判断突破请用 60 日新高/新低相关字段。
+
+    返回 None 的情况：K 线不足、或区间为零（连续一字板/长期停牌）。
+    """
+    if lookback <= 1:
+        raise ValueError("lookback 必须大于 1")
+
+    window = bars[-lookback:]
+    # 少于 10 根没有摆动结构可谈，算出来也是噪声
+    if len(window) < 10:
+        return None
+
+    hi_idx = max(range(len(window)), key=lambda i: window[i].high)
+    lo_idx = min(range(len(window)), key=lambda i: window[i].low)
+    high = window[hi_idx].high
+    low = window[lo_idx].low
+    span = high - low
+    if span <= 0:
+        return None
+
+    uptrend = hi_idx > lo_idx
+    close = window[-1].close
+
+    levels: list[FibLevel] = []
+
+    # 摆动端点本身也是关键位，一并给出
+    if uptrend:
+        levels.append(FibLevel(0.0, "0%（高点）", round(high, 2), "swing"))
+        levels += [
+            FibLevel(r, f"{r * 100:.1f}%", round(high - span * r, 2), "retracement")
+            for r in _FIB_RETRACEMENTS
+        ]
+        levels.append(FibLevel(1.0, "100%（低点）", round(low, 2), "swing"))
+        levels += [
+            FibLevel(r, f"{r * 100:.1f}%", round(low + span * r, 2), "extension")
+            for r in _FIB_EXTENSIONS
+        ]
+        retraced = (high - close) / span * 100
+    else:
+        levels.append(FibLevel(0.0, "0%（低点）", round(low, 2), "swing"))
+        levels += [
+            FibLevel(r, f"{r * 100:.1f}%", round(low + span * r, 2), "retracement")
+            for r in _FIB_RETRACEMENTS
+        ]
+        levels.append(FibLevel(1.0, "100%（高点）", round(high, 2), "swing"))
+        levels += [
+            FibLevel(r, f"{r * 100:.1f}%", round(high - span * r, 2), "extension")
+            for r in _FIB_EXTENSIONS
+        ]
+        retraced = (close - low) / span * 100
+
+    below = [lv for lv in levels if lv.price < close]
+    above = [lv for lv in levels if lv.price > close]
+
+    return FibAnalysis(
+        direction="上升" if uptrend else "下降",
+        swing_high=round(high, 2),
+        swing_low=round(low, 2),
+        swing_high_date=window[hi_idx].date,
+        swing_low_date=window[lo_idx].date,
+        lookback=len(window),
+        retracement_pct=round(retraced, 1),
+        levels=levels,
+        nearest_support=max(below, key=lambda lv: lv.price) if below else None,
+        nearest_resistance=min(above, key=lambda lv: lv.price) if above else None,
+    )
+
+
 # ---------------------------------------------------------------- 汇总
 
 
@@ -198,6 +322,8 @@ class IndicatorSnapshot:
     return_60d: float | None = None
     volatility_20d: float | None = None  # 20 日收益率年化波动 %
     volume_ratio_5_20: float | None = None  # 5 日均量 / 20 日均量
+    # 斐波那契回撤（60 日摆动区间）
+    fib: FibAnalysis | None = None
     # 形态标签
     patterns: list[str] = field(default_factory=list)
 
@@ -244,6 +370,8 @@ def compute_snapshot(bars: list[Bar]) -> IndicatorSnapshot:
     vol20 = _tail(sma(volumes, 20))
     if vol5 and vol20 and vol20 > 0:
         snap.volume_ratio_5_20 = round(vol5 / vol20, 2)
+
+    snap.fib = fib_analysis(bars)
 
     snap.patterns = _detect_patterns(snap, closes, dif, dea)
     return snap
@@ -332,5 +460,46 @@ def _detect_patterns(
         tags.append("接近 60 日新高")
     if len(closes) >= 60 and snap.low_60 and closes[-1] <= snap.low_60 * 1.02:
         tags.append("接近 60 日新低")
+
+    tags += _fib_tags(snap)
+
+    return tags
+
+
+def _fib_tags(snap: IndicatorSnapshot) -> list[str]:
+    """斐波那契形态标签。
+
+    只在价格**确实贴近**某条关键位时才输出 —— 否则每只票都会挂一堆
+    "存在斐波那契位" 的废话标签，反而淹没真正的信号。
+    """
+    fib = snap.fib
+    if fib is None or snap.close is None:
+        return []
+
+    tags: list[str] = []
+
+    # 贴近阈值取 1.2%：A股日内波动通常 1-3%，再宽就失去指示意义了
+    threshold = 0.012
+    for level in fib.levels:
+        if level.kind == "swing" or level.price <= 0:
+            continue
+        if abs(snap.close - level.price) / level.price <= threshold:
+            role = "支撑" if level.price <= snap.close else "阻力"
+            kind_cn = "回撤" if level.kind == "retracement" else "扩展"
+            tags.append(
+                f"贴近斐波那契{kind_cn} {level.label} 位（{level.price}，{role}）"
+            )
+
+    # 注意：retracement_pct 恒在 0~100（端点即窗口极值），
+    # 所以这里只按深度分档，不存在"越界"的情况。
+    pct = fib.retracement_pct
+    if pct is not None:
+        if 55 <= pct <= 68:
+            # 61.8% 是市场关注度最高的一档，落在这个带里值得单独点出
+            tags.append(f"回撤 {pct:.0f}%，处于 61.8% 黄金分割带")
+        elif pct >= 78:
+            tags.append(f"回撤 {pct:.0f}%，已深度回吐{fib.direction}段行情")
+        elif pct <= 24:
+            tags.append(f"回撤仅 {pct:.0f}%，仍处{fib.direction}段末端")
 
     return tags

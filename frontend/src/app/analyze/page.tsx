@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { AgentCard } from "@/components/AgentCard";
 import { DecisionPanel } from "@/components/DecisionPanel";
+import { FibPanel } from "@/components/FibPanel";
 import { PriceChart } from "@/components/PriceChart";
 import { StockSearch } from "@/components/StockSearch";
 import { api } from "@/lib/api";
@@ -35,6 +36,8 @@ function AnalyzeInner() {
 
   const [horizon, setHorizon] = useState<Horizon>("波段");
   const [note, setNote] = useState("");
+  // 斐波那契默认叠加在图上 —— 用户点进个股就是想看关键价位
+  const [showFib, setShowFib] = useState(true);
   const [runId, setRunId] = useState<string | null>(runIdParam);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -133,7 +136,18 @@ function AnalyzeInner() {
         )}
       </div>
 
-      <PriceChart bars={bars} />
+      <PriceChart bars={bars} fib={indicators?.fib} showFib={showFib} />
+
+      {indicators?.fib && (
+        <div className="mt-3">
+          <FibPanel
+            fib={indicators.fib}
+            close={quote?.price ?? indicators.close}
+            enabled={showFib}
+            onToggle={() => setShowFib((v) => !v)}
+          />
+        </div>
+      )}
 
       {indicators?.patterns && indicators.patterns.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-1.5">
