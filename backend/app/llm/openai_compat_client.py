@@ -68,8 +68,15 @@ class OpenAICompatLLM:
             ],
         }
         if json_schema is not None:
-            # 兼容接口对 json_schema 支持参差不齐，统一退化成 json_object
-            # 并在提示词里说明字段（见 agents/prompts.py），解析后再自行校验。
+            # 兼容接口普遍不支持 json_schema，只有 json_object —— 它**只保证
+            # 输出是合法 JSON，不保证字段正确**。而 Claude 那条路是服务端按
+            # schema 强制约束的，提示词里因此没必要罗列字段。
+            # 所以这里把 schema 自动渲染成字段说明追加到系统提示，
+            # 否则模型会漏字段（实测 horizon/summary/data_quality 就没被提到过）。
+            # 另外 DeepSeek 要求 json_object 模式下提示里必须出现 "json" 字样。
+            payload["messages"][0]["content"] = (
+                system + "\n\n" + _render_schema(json_schema)
+            )
             payload["response_format"] = {"type": "json_object"}
         return payload
 
@@ -124,6 +131,48 @@ class OpenAICompatLLM:
                     yield StreamChunk(text=delta.content)
         except Exception as exc:
             raise LLMError(f"{self._model} 流式调用失败：{exc}") from exc
+
+
+def _render_schema(schema: dict[str, Any]) -> str:
+    """把 JSON Schema 渲染成模型看得懂的字段清单。
+
+    兼容接口没有服务端 schema 约束，只能靠提示词讲清楚要输出什么。
+    刻意用中文 + 逐字段列举，而不是直接丢原始 schema ——
+    原始 schema 里的 JSON 结构容易被模型当成待填的模板抄回来。
+    """
+    props: dict[str, Any] = schema.get("properties", {})
+    required = set(schema.get("required", []))
+
+    lines = [
+        "## 输出格式（严格遵守）",
+        "",
+        "只输出一个 json 对象，不要 markdown 代码块，不要任何解释文字。",
+        "必须包含下列全部字段，一个都不能少：",
+        "",
+    ]
+    for name, spec in props.items():
+        parts = [f"- `{name}`"]
+        type_cn = {
+            "string": "字符串",
+            "integer": "整数",
+            "number": "数字",
+            "boolean": "布尔值",
+            "array": "数组",
+            "object": "对象",
+        }.get(spec.get("type", ""), spec.get("type", ""))
+        if spec.get("type") == "array":
+            item_type = spec.get("items", {}).get("type", "string")
+            type_cn = f"数组（元素为{'字符串' if item_type == 'string' else item_type}）"
+        parts.append(f"（{type_cn}）")
+        if "enum" in spec:
+            parts.append("，只能取：" + " / ".join(str(v) for v in spec["enum"]))
+        if name in required:
+            parts.append("，**必填**")
+        if spec.get("description"):
+            parts.append("：" + spec["description"])
+        lines.append("".join(parts))
+
+    return "\n".join(lines)
 
 
 def _parse_json(text: str) -> dict[str, Any] | None:
