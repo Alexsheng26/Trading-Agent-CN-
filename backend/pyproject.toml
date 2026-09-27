@@ -8,11 +8,14 @@ dependencies = [
     "uvicorn[standard]>=0.32",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
-    "httpx>=0.27",
-    "sqlalchemy>=2.0.36",
+    # [asyncio] 不能省：它带上 greenlet，是 SQLAlchemy 异步支持的硬依赖。
+    # SQLAlchemy 2.0 曾按平台条件自动装 greenlet，2.1 起不再这么做 ——
+    # 于是"裸 sqlalchemy + 异步"在新版上直接 ImportError。
+    # 依赖传递来的东西从来就没有保证，用到什么就显式声明什么。
+    "sqlalchemy[asyncio]>=2.0.36",
+    # SQLite 的异步驱动。不被代码直接 import，但 DATABASE_URL 用到它
     "aiosqlite>=0.20",
     "anthropic>=0.40",
-    "python-dateutil>=2.9",
 ]
 
 [project.optional-dependencies]

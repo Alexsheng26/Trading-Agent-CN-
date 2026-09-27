@@ -27,6 +27,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
           python -m pytest -q
+      # 只装运行时依赖（不带 dev），验证声明是否完整。
+      # dev 额外会顺带拉进一堆包，把"漏声明但恰好被传递进来"的依赖盖住 ——
+      # sqlalchemy 的 greenlet 就是这么漏的：2.0 按平台条件自动装，
+      # 2.1 起不再装，于是线上直接 ImportError 而本地毫无征兆。
+      - name: 仅装运行时依赖并导入
+        run: |
+          python -m venv /tmp/runtime-only
+          /tmp/runtime-only/bin/pip install --upgrade pip
+          /tmp/runtime-only/bin/pip install -e /tmp/artifact/backend
+          cd /tmp/artifact/backend && /tmp/runtime-only/bin/python -c "from app.main import app"
+
       - name: 确认产物能真正启动
         working-directory: /tmp/artifact/backend
         env:
