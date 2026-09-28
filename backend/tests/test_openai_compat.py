@@ -7,12 +7,21 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 
 import pytest
 
 from app.agents.prompts import DECISION_SCHEMA
 from app.llm.openai_compat_client import _parse_json, _render_schema
+
+# schema 渲染与 JSON 解析是纯函数，不需要 openai 包。
+# 但构造客户端会 import openai —— 它是可选依赖（`.[openai]`），
+# 只装 `.[dev]` 的环境里没有，这几项要跳过而不是失败。
+requires_openai = pytest.mark.skipif(
+    importlib.util.find_spec("openai") is None,
+    reason='需要可选依赖 openai：pip install -e ".[openai]"',
+)
 
 # ---------------------------------------------------------------- schema 渲染
 
@@ -60,6 +69,7 @@ def _client():  # type: ignore[no-untyped-def]
                            model="deepseek-chat")
 
 
+@requires_openai
 def test_payload_injects_schema_only_in_json_mode() -> None:
     from app.llm.base import Message
 
@@ -79,6 +89,7 @@ def test_payload_injects_schema_only_in_json_mode() -> None:
     assert "你是交易决策员" in structured["messages"][0]["content"]
 
 
+@requires_openai
 def test_payload_merges_system_blocks_in_order() -> None:
     """兼容接口没有分段 system，多段要按顺序拼成一段。"""
     from app.llm.base import Message
@@ -91,6 +102,7 @@ def test_payload_merges_system_blocks_in_order() -> None:
     assert payload["messages"][1] == {"role": "user", "content": "hi"}
 
 
+@requires_openai
 def test_payload_respects_model_override() -> None:
     from app.llm.base import Message
 
