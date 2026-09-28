@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -31,8 +32,6 @@ log = logging.getLogger(__name__)
 
 #: 一次拉全市场的上限。A股总数 5400 左右，留足余量。
 _FETCH_LIMIT = 8000
-#: 一次 SQL 取回的候选行数，再在 Python 里排序截断
-_CANDIDATES = 300
 
 _refresh_task: asyncio.Task | None = None
 #: 目录里有多少条。None = 还没查过。缓存起来，避免每次搜索都 COUNT。
@@ -57,55 +56,51 @@ def _escape_like(text: str) -> str:
 
 
 async def lookup(query: str, limit: int = 20) -> list[StockBasic]:
-    """在本地目录里搜。不发任何网络请求。"""
+    """在本地目录里搜。不发任何网络请求。
+
+    分三档查、按档次拼结果：完全相等 → 前缀匹配 → 包含。
+    分档是必须的：如果只发一条 `LIKE '%关键词%'` 再在 Python 里排序，
+    就得先限制候选行数（否则搜"科技"会捞回几百行），而一旦截断，
+    真正想要的那条精确匹配完全可能落在截断之外。
+    分档之后每档自带 LIMIT，既有界又不会漏掉精确匹配。
+    """
     q = query.strip()
     if not q:
         return []
 
-    pattern = f"%{_escape_like(q)}%"
+    esc = _escape_like(q)
+    code, name = SymbolDirectory.code, SymbolDirectory.name
+    tiers = (
+        or_(code == q, name == q),
+        or_(code.like(f"{esc}%", escape="\\"), name.like(f"{esc}%", escape="\\")),
+        or_(code.like(f"%{esc}%", escape="\\"), name.like(f"%{esc}%", escape="\\")),
+    )
+
+    out: list[StockBasic] = []
+    seen: set[str] = set()
     async with get_sessionmaker()() as session:
-        rows = (
-            await session.scalars(
-                select(SymbolDirectory)
-                .where(
-                    or_(
-                        SymbolDirectory.code.like(pattern, escape="\\"),
-                        SymbolDirectory.name.like(pattern, escape="\\"),
+        for where in tiers:
+            if len(out) >= limit:
+                break
+            rows = (
+                await session.scalars(
+                    # 同一档内按代码排序，保证结果稳定 —— 翻译成人话就是
+                    # 同样的关键词每次出来的顺序都一样
+                    select(SymbolDirectory).where(where).order_by(code).limit(limit * 2)
+                )
+            ).all()
+            for r in rows:
+                if r.symbol in seen:
+                    continue
+                seen.add(r.symbol)
+                out.append(
+                    StockBasic(
+                        symbol=r.symbol, name=r.name, exchange=r.exchange, board=r.board
                     )
                 )
-                .limit(_CANDIDATES)
-            )
-        ).all()
-
-    ranked = sorted(rows, key=lambda r: (_rank(r, q), r.code))
-    return [
-        StockBasic(
-            symbol=r.symbol,
-            name=r.name,
-            exchange=r.exchange,
-            board=r.board,
-        )
-        for r in ranked[:limit]
-    ]
-
-
-def _rank(row: SymbolDirectory, q: str) -> int:
-    """相关度。数字越小越靠前。
-
-    搜"600" 时 600000 应该比"名称里带 600 的"更靠前；
-    搜"茅台"时"贵州茅台"应该比"茅台机场"（假设有）更靠前。
-    """
-    if row.code == q:
-        return 0
-    if row.name == q:
-        return 1
-    if row.code.startswith(q):
-        return 2
-    if row.name.startswith(q):
-        return 3
-    if q in row.code:
-        return 4
-    return 5
+                if len(out) >= limit:
+                    break
+    return out[:limit]
 
 
 async def name_of(symbol: str) -> str:
@@ -139,6 +134,7 @@ async def status() -> IndexStatus:
             (await session.scalars(select(SymbolDirectory.source).distinct())).all()
         )
 
+    # 顺手把 is_ready() 的计数缓存刷新一下，省掉下次搜索的那次 COUNT
     global _count
     _count = count
 
@@ -209,6 +205,11 @@ def schedule_refresh() -> bool:
     搜索请求不该为了建目录而等 5000 行下载。
     """
     global _refresh_task
+    # 关掉自动刷新就一条路都不许偷偷去拉：
+    # 漏了这个检查的后果不止是"设置项不生效" —— 每次搜索都可能派一个后台
+    # 写库任务，任务和请求的生命周期不一致，测试里表现为随机卡死。
+    if not get_settings().symbol_index_autorefresh:
+        return False
     if _refresh_task is not None and not _refresh_task.done():
         return False
 
@@ -222,6 +223,19 @@ def schedule_refresh() -> bool:
     return True
 
 
+async def refresh_if_stale() -> bool:
+    """目录过期了就在后台补一次。返回是否排了刷新任务。
+
+    给"按名称搜不到"这条路用：可能是目录建好之后才上市的新股。
+    刻意不阻塞调用方 —— 本次搜索照常返回空，下次就能搜到了。
+    """
+    if not get_settings().symbol_index_autorefresh:
+        return False  # 提前返回，省掉下面那几次查询
+    if (await status()).stale:
+        return schedule_refresh()
+    return False
+
+
 async def refresh_if_needed() -> None:
     """启动时调用：目录空了或过期了就在后台补。"""
     if not get_settings().symbol_index_autorefresh:
@@ -229,6 +243,22 @@ async def refresh_if_needed() -> None:
     st = await status()
     if st.count == 0 or st.stale:
         schedule_refresh()
+
+
+async def cancel_refresh() -> None:
+    """关停时取消未跑完的后台刷新。
+
+    不取消的话，进程退出时会留下 "Task was destroyed but it is pending"，
+    更糟的是任务可能在数据库连接被关掉之后才醒过来。
+    """
+    global _refresh_task
+    task = _refresh_task
+    _refresh_task = None
+    if task is None or task.done():
+        return
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
 
 
 def reset_state() -> None:

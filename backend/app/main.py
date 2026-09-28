@@ -26,7 +26,8 @@ from app.core.errors import (
 )
 from app.core.logging import setup_logging
 from app.db.session import dispose_db, init_db
-from app.services.symbol_index import refresh_if_needed
+from app.services.run_store import store
+from app.services.symbol_index import cancel_refresh, refresh_if_needed
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +45,13 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # 真正拉 5000 行不在启动路径上，失败也只是退回实时查询。
     await refresh_if_needed()
     yield
+    # 关停顺序很重要：先把还在跑的后台任务收干净，再关数据库。
+    # 反过来的话，任务会在连接被关掉之后才醒过来 —— 更糟的是它可能正卡在
+    # 一个没提交的写事务上，把 SQLite 的写锁一直握着。
+    cancelled = await store.cancel_all()
+    if cancelled:
+        log.info("已取消 %d 个进行中的分析", cancelled)
+    await cancel_refresh()
     await dispose_db()
     log.info("已关闭")
 

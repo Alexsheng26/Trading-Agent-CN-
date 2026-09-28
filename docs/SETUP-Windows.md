@@ -380,14 +380,24 @@ docker compose up -d --build
 容易出问题）。要取出来：
 
 ```powershell
+# 先停后端：SQLite 开了 WAL 模式，运行中最近的写入可能还在 -wal 文件里，
+# 只拷 .db 会丢掉那部分
+docker compose stop backend
 docker compose cp backend:/app/data/trading_agent.db .\backup.db
+docker compose start backend
 ```
 
 放回去：
 ```powershell
+docker compose stop backend
 docker compose cp .\backup.db backend:/app/data/trading_agent.db
-docker compose restart backend
+docker compose start backend
 ```
+
+> 为什么是 WAL：本工具会在后台建"全市场代码-名称目录"（按名称搜索靠它），
+> 那是一次 5000 多行的写入，同时前端还在读。默认的日志模式下写会把读全挡住，
+> 随机报 `database is locked`；WAL 下读写互不阻塞。
+> 代价是数据库旁边会多出 `-wal` 和 `-shm` 两个文件，属正常现象。
 
 ---
 

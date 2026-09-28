@@ -11,9 +11,11 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 
 import pytest
 
+from app.core.clock import now_utc
 from app.data.base import ALL_CAPABILITIES, StockBasic
 from app.data.mock_provider import MockProvider
 from app.data.registry import ProviderRegistry
@@ -44,13 +46,19 @@ def _wipe() -> None:
     不用去操心哪个事件循环持有 async engine。
     """
     import sqlite3
+    from contextlib import closing
 
     from app.core.config import get_settings
 
     path = get_settings().database_url.split("///", 1)[-1]
+    # closing 是必须的：`with sqlite3.connect(...)` 只提交事务、**不关连接**。
+    # 每个用例漏一个连接的话，它们会一直握着 SQLite 的锁，
+    # 后面异步侧的写入就可能卡住。
     try:
-        with sqlite3.connect(path) as conn:
+        with closing(sqlite3.connect(path, timeout=30)) as conn:
+            conn.execute("PRAGMA busy_timeout=30000")
             conn.execute("DELETE FROM symbol_directory")
+            conn.commit()
     except sqlite3.OperationalError:
         pass  # 表还没建出来
 
@@ -63,6 +71,22 @@ def _clean_directory():  # type: ignore[no-untyped-def]
     yield
     _wipe()
     symbol_index.reset_state()
+
+
+@pytest.fixture
+def _autorefresh_on(monkeypatch):  # type: ignore[no-untyped-def]
+    """打开后台自动刷新。
+
+    测试环境默认是关的 —— 后台写库任务的生命周期和用例不一致，
+    会和下一个用例的清表动作抢锁，表现为随机卡死。
+    只有专门测这个行为的用例才打开。
+    """
+    from app.core.config import get_settings
+
+    monkeypatch.setenv("SYMBOL_INDEX_AUTOREFRESH", "true")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 @pytest.fixture
@@ -202,7 +226,7 @@ async def test_refresh_raises_when_all_providers_dead(_db) -> None:  # type: ign
         await symbol_index.refresh()
 
 
-async def test_schedule_refresh_does_not_duplicate(_db) -> None:  # type: ignore[no-untyped-def]
+async def test_schedule_refresh_does_not_duplicate(_db, _autorefresh_on) -> None:  # type: ignore[no-untyped-def]
     """并发搜索不该排出一堆刷新任务。"""
     await _db()
     _use([MockProvider()])
@@ -212,7 +236,7 @@ async def test_schedule_refresh_does_not_duplicate(_db) -> None:  # type: ignore
     assert await symbol_index.is_ready() is True
 
 
-async def test_schedule_refresh_swallows_failures(_db) -> None:  # type: ignore[no-untyped-def]
+async def test_schedule_refresh_swallows_failures(_db, _autorefresh_on) -> None:  # type: ignore[no-untyped-def]
     """后台刷新失败不能把异常泄漏出去 —— 它只是个可选的加速手段。"""
     await _db()
     _use([_Dead()])
@@ -293,3 +317,101 @@ def test_search_reports_503_when_nothing_can_answer(client) -> None:  # type: ig
     resp = client.get("/api/v1/market/search", params={"q": "茅台"})
     assert resp.status_code == 503
     assert "dead" in resp.json()["detail"]
+
+
+async def test_refresh_if_stale_schedules_only_when_stale(_db, _autorefresh_on) -> None:  # type: ignore[no-untyped-def]
+    """按名称搜不到时会补目录 —— 但目录还新鲜就别白跑一趟。"""
+    await _db()
+    _use([MockProvider()])
+    await symbol_index.refresh()
+
+    # 刚建好，不该再刷
+    assert await symbol_index.refresh_if_stale() is False
+
+    # 把时间戳改老，就该刷
+    from sqlalchemy import update
+
+    from app.db.models import SymbolDirectory
+    from app.db.session import get_sessionmaker
+
+    async with get_sessionmaker()() as session:
+        await session.execute(
+            update(SymbolDirectory).values(
+                updated_at=now_utc() - timedelta(hours=48)
+            )
+        )
+        await session.commit()
+    symbol_index.reset_state()
+
+    assert await symbol_index.refresh_if_stale() is True
+    await asyncio.sleep(0.2)
+
+
+async def test_refresh_if_stale_respects_autorefresh_off(_db) -> None:  # type: ignore[no-untyped-def]
+    """显式关掉自动刷新时，任何路径都不该偷偷去拉数据源。"""
+    await _db()
+    _use([MockProvider()])
+    assert await symbol_index.refresh_if_stale() is False  # 测试环境里是 false
+
+
+async def test_autorefresh_off_blocks_every_background_path(_db) -> None:  # type: ignore[no-untyped-def]
+    """SYMBOL_INDEX_AUTOREFRESH=false 时，没有任何一条路可以偷偷去拉数据源。
+
+    漏掉这个检查的后果不止是"设置项不生效"：每次搜索都可能派一个后台写库
+    任务，任务的生命周期和请求不一致 —— 本项目的测试套件因此随机卡死过。
+    """
+    await _db()
+    _use([MockProvider()])
+
+    assert symbol_index.schedule_refresh() is False
+    assert await symbol_index.refresh_if_stale() is False
+    await symbol_index.refresh_if_needed()  # 不该抛，也不该排任务
+    await asyncio.sleep(0.15)
+    assert await symbol_index.is_ready() is False, "开关关着却建起了目录"
+
+    # 显式调用 refresh() 仍然有效 —— 那是用户主动点「重建目录」的路径
+    assert await symbol_index.refresh() > 0
+
+
+async def test_cancel_refresh_is_safe_when_nothing_running(_db) -> None:  # type: ignore[no-untyped-def]
+    await _db()
+    await symbol_index.cancel_refresh()  # 不该抛
+    assert True
+
+
+async def test_lookup_exact_match_survives_many_substring_hits(_db) -> None:  # type: ignore[no-untyped-def]
+    """精确匹配不能被一堆"名称里含关键词"的票挤掉。
+
+    分档查询就是为这条服务的：如果只发一条 LIKE '%关键词%' 再截断候选，
+    想要的那条完全可能落在截断之外。
+    """
+    await _db()
+    _use([MockProvider()])
+
+    # 造 80 只名字里都含"科技"的票，外加一只名字就叫"科技"的
+    for i in range(80):
+        await _insert(symbol=f"00{i:04d}.SZ", code=f"00{i:04d}", name=f"某某科技{i}")
+    await _insert(symbol="600888.SH", code="600888", name="科技")
+
+    hits = await symbol_index.lookup("科技", limit=5)
+    assert hits[0].symbol == "600888.SH", "完全相等的那条必须排第一"
+    assert len(hits) == 5
+
+
+async def test_lookup_prefix_beats_contains(_db) -> None:  # type: ignore[no-untyped-def]
+    await _db()
+    await _insert(symbol="600001.SH", code="600001", name="中国平安")
+    await _insert(symbol="600002.SH", code="600002", name="平安银行")
+
+    hits = await symbol_index.lookup("平安", limit=5)
+    assert hits[0].name == "平安银行", "前缀匹配应当优先于包含匹配"
+
+
+async def test_lookup_is_stable_across_calls(_db) -> None:  # type: ignore[no-untyped-def]
+    """同一个关键词每次出来的顺序要一样，不然下拉列表会跳。"""
+    await _db()
+    _use([MockProvider()])
+    await symbol_index.refresh()
+    first = [r.symbol for r in await symbol_index.lookup("0", limit=5)]
+    for _ in range(3):
+        assert [r.symbol for r in await symbol_index.lookup("0", limit=5)] == first

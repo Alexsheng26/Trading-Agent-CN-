@@ -50,6 +50,10 @@ async def search(
     if await symbol_index.is_ready():
         # 目录已建好，完全信任本地结果，不再走网络
         results = await symbol_index.lookup(q, limit)
+        if not results and direct is None:
+            # 按名称搜但目录里没有：可能是目录建好之后才上市的新股。
+            # 在后台补一次目录（不阻塞本次请求），下次就能搜到。
+            await symbol_index.refresh_if_stale()
     else:
         # 目录还是空的：现场问一次（有 provider_timeout 兜底），
         # 同时在后台把目录建起来

@@ -25,6 +25,9 @@ log = logging.getLogger(__name__)
 
 # 完成的 run 在内存里保留多久（秒），之后只能从数据库读最终结果
 _RETAIN_SECONDS = 1800
+#: 关停时等后台任务收尾的宽限时间（秒）。
+#: 取消分支只写一条很小的记录，本地 SQLite 上是亚毫秒级，0.3 秒足够宽裕。
+_CANCEL_GRACE_SECONDS = 0.3
 # 单次 run 最多缓冲多少条事件，防止异常情况把内存吃满
 _MAX_EVENTS = 20000
 
@@ -110,6 +113,32 @@ class RunStore:
             return False
         buffer.task.cancel()
         return True
+
+    async def cancel_all(self) -> int:
+        """取消所有在跑的分析并等它们收尾。返回取消了几个。
+
+        关停时必须做这件事。不做的话，进程退出时那些后台任务正卡在
+        "写数据库"这一步，事件循环一关，底下的 aiosqlite 连接就带着一个
+        没提交的写事务留在那儿 —— **SQLite 的写锁从此不放**，
+        之后任何写入都会等锁等到超时。
+        （本项目的测试套件因此随机卡死过，排查了很久才定位到这里。）
+
+        `_execute` 里有 CancelledError 的处理分支，会把状态落成"已取消"，
+        所以这里取消是干净的，不会留下一条永远 running 的记录。
+        """
+        tasks = [b.task for b in self._buffers.values() if b.task and not b.task.done()]
+        if not tasks:
+            return 0
+        for task in tasks:
+            task.cancel()
+
+        # 用 asyncio.wait 而不是 `asyncio.timeout` + `gather`：
+        # 后者超时的时候会**再取消一次**这些任务，而它们此刻正在
+        # CancelledError 分支里写"已取消"那条记录 —— 二次取消会把写打断在
+        # 一半，正好制造出我们想避免的那个没提交的写事务。
+        # asyncio.wait 超时只是返回，不动 pending 的任务。
+        await asyncio.wait(tasks, timeout=_CANCEL_GRACE_SECONDS)
+        return len(tasks)
 
     def _gc(self) -> None:
         now = time.monotonic()
