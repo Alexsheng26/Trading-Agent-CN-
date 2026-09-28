@@ -9,13 +9,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from datetime import datetime
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.context import AnalysisContext
 from app.agents.orchestrator import AnalysisOrchestrator, Event
+from app.core.clock import now_utc
 from app.core.config import get_settings
 from app.db.models import AgentOutputRow, AnalysisRun
 from app.db.session import get_sessionmaker
@@ -150,7 +150,7 @@ class AnalysisService:
             run.data_sources = meta.get("data_sources")
             run.data_warnings = meta.get("data_warnings")
             run.elapsed_sec = meta.get("elapsed_sec")
-            run.finished_at = datetime.now()
+            run.finished_at = now_utc()
 
             # 重跑同一个 run_id 时先清掉旧产出（正常流程不会发生，防御性）
             await session.execute(delete(AgentOutputRow).where(AgentOutputRow.run_id == run_id))

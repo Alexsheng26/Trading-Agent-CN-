@@ -89,6 +89,58 @@ def test_snapshot_returns_all_dimensions(client) -> None:  # type: ignore[no-unt
     assert body["sources"]  # 溯源信息要带上
 
 
+def test_session_endpoint_shape(client) -> None:  # type: ignore[no-untyped-def]
+    """前端靠这个接口决定轮询节奏，字段缺一个都会让实时刷新失灵。"""
+    body = client.get("/api/v1/market/session").json()
+    assert body["phase"] in (
+        "盘前",
+        "集合竞价",
+        "连续竞价",
+        "午间休市",
+        "已收盘",
+        "非交易日",
+    )
+    assert isinstance(body["is_live"], bool)
+    # 非交易时段不该给轮询间隔，交易时段必须给
+    assert (body["poll_interval"] is None) is not body["is_live"]
+    assert body["as_of"].endswith("+08:00")  # 北京时间，且带时区
+
+
+def test_quotes_batch(client) -> None:  # type: ignore[no-untyped-def]
+    body = client.get("/api/v1/market/quotes?symbols=600519,000001,300750").json()
+    assert len(body) == 3
+    assert {q["symbol"] for q in body} == {"600519.SH", "000001.SZ", "300750.SZ"}
+
+
+def test_quotes_batch_skips_bad_symbols(client) -> None:  # type: ignore[no-untyped-def]
+    """一只坏票不能毁掉整个自选股列表。"""
+    body = client.get("/api/v1/market/quotes?symbols=600519,不是代码,999999").json()
+    assert [q["symbol"] for q in body] == ["600519.SH"]
+
+
+def test_quotes_batch_empty_input(client) -> None:  # type: ignore[no-untyped-def]
+    assert client.get("/api/v1/market/quotes?symbols=,,").json() == []
+
+
+def test_quotes_batch_caps_at_50(client) -> None:  # type: ignore[no-untyped-def]
+    """别让一个请求把数据源打挂。"""
+    symbols = ",".join(f"600{i:03d}" for i in range(60))
+    body = client.get(f"/api/v1/market/quotes?symbols={symbols}").json()
+    assert len(body) <= 50
+
+
+def test_diagnose_reports_per_interface(client) -> None:  # type: ignore[no-untyped-def]
+    """排查数据源问题的自助接口 —— 逐接口给出状态，不用翻容器日志。"""
+    body = client.get("/api/v1/market/diagnose").json()
+    assert body["providers"], "至少要报告一个数据源"
+    mock = next(p for p in body["providers"] if p["provider"] == "mock")
+    assert mock["dependency_ok"] is True
+    names = {i["name"] for i in mock["interfaces"]}
+    assert {"搜索", "实时行情", "日线", "新闻", "大盘指数"} <= names
+    for iface in mock["interfaces"]:
+        assert iface["status"] in ("正常", "空结果", "失败", "超时", "不支持", "跳过")
+
+
 # ---------------------------------------------------------------- 自选股
 
 

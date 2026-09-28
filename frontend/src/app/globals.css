@@ -92,6 +92,38 @@ body {
   color: var(--accent);
 }
 
+/*
+ * 行情跳动提示。
+ * 纯数字变化眼睛很难捕捉，闪一下背景才看得见 —— 红涨绿跌，和数字同色系。
+ */
+@keyframes flash-up {
+  from { background-color: var(--up-soft); }
+  to { background-color: transparent; }
+}
+@keyframes flash-down {
+  from { background-color: var(--down-soft); }
+  to { background-color: transparent; }
+}
+.flash-up { animation: flash-up 0.8s ease-out; }
+.flash-down { animation: flash-down 0.8s ease-out; }
+
+/* 实时中的呼吸点 */
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.75); }
+}
+.live-dot { animation: live-pulse 1.6s ease-in-out infinite; }
+
+/* 前庭功能障碍/晕动症用户会把这个开关打开，闪烁和呼吸动画都要让位 */
+@media (prefers-reduced-motion: reduce) {
+  .flash-up,
+  .flash-down,
+  .live-dot,
+  .streaming-cursor::after {
+    animation: none;
+  }
+}
+
 /* Markdown 正文排版 —— 用 Tailwind 的 typography 插件会多一个依赖，这里手写够用 */
 .md :where(h1, h2, h3, h4) {
   font-weight: 600;

@@ -16,6 +16,7 @@ import logging
 from datetime import date, datetime
 from typing import Any
 
+from app.core.clock import now_utc
 from app.core.errors import ProviderUnavailable
 from app.data.base import (
     CAP_BARS,
@@ -152,7 +153,7 @@ class AkshareProvider:
             pb=_to_float(_pick(row, "市净率")),
             total_market_cap=_to_float(_pick(row, "总市值")),
             float_market_cap=_to_float(_pick(row, "流通市值")),
-            updated_at=datetime.now(),
+            updated_at=now_utc(),
         )
 
     async def daily_bars(

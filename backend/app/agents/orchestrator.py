@@ -29,7 +29,6 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any, Literal
 
 from app.agents.base import AgentOutput, LLMAgent
@@ -42,6 +41,7 @@ from app.agents.roster import (
     RiskManager,
     _render_stage,
 )
+from app.core.clock import now_utc
 from app.core.config import Settings, get_settings
 from app.llm.base import LLMClient, Message, Usage
 
@@ -149,7 +149,7 @@ class AnalysisOrchestrator:
                     "usage": total.as_dict(),
                     "agent_count": len(board),
                     "disclaimer": DISCLAIMER,
-                    "finished_at": datetime.now().isoformat(),
+                    "finished_at": now_utc().isoformat(),
                 },
             )
         except asyncio.CancelledError:

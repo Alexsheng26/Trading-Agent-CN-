@@ -104,12 +104,17 @@ class ProviderRegistry:
     ) -> T:
         """按顺序尝试支持该能力的数据源，第一个成功的胜出。"""
         await self.health()
-        attempts: list[str] = []
+        attempts: list[str] = []  # 真尝试过、失败了的
+        skipped: list[str] = []  # 压根没尝试的
 
         for provider in self._providers:
             if capability not in provider.capabilities:
+                skipped.append(f"{provider.name}: 未声明支持 {capability}")
                 continue
             if not self._healthy.get(provider.name, False):
+                # 以前这里静默跳过，报错就成了"没有数据源声明支持该能力" ——
+                # 明明是探活没过，却指向完全不相干的原因，排查时非常误导。
+                skipped.append(f"{provider.name}: 探活未通过（依赖未安装或配置缺失）")
                 continue
             try:
                 # 时间盒住每次尝试：卡住的数据源会拖死整个请求，
@@ -138,7 +143,7 @@ class ProviderRegistry:
             self.last_sources[capability] = provider.name
             return result
 
-        detail = "；".join(attempts) if attempts else "没有数据源声明支持该能力"
+        detail = "；".join(attempts + skipped) if (attempts or skipped) else "未配置任何数据源"
         raise DataNotFound(f"所有数据源都拿不到 {capability} —— {detail}")
 
     # ---------------- 对上层的统一接口 ----------------

@@ -3,6 +3,8 @@
 // 设置页：只展示后端的实际配置状态（配置本身在 .env 里改）。
 
 import { useEffect, useState } from "react";
+import { DiagnosePanel } from "@/components/DiagnosePanel";
+import { SymbolIndexPanel } from "@/components/SymbolIndexPanel";
 import { api } from "@/lib/api";
 import type { SystemStatus } from "@/lib/types";
 
@@ -74,6 +76,14 @@ DATA_PROVIDER_ORDER=akshare,tushare`}
           按顺序尝试，前面的不可用时自动降级到后面。单个接口不支持也会逐项降级
           —— 比如 Tushare 没有个股新闻，新闻就会自动走 AKShare。
         </p>
+      </Section>
+
+      <Section title="股票代码目录">
+        <SymbolIndexPanel />
+      </Section>
+
+      <Section title="数据源诊断">
+        <DiagnosePanel />
       </Section>
 
       <Section title="流水线">

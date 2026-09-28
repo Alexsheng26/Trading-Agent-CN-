@@ -7,15 +7,17 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { AgentCard } from "@/components/AgentCard";
 import { DecisionPanel } from "@/components/DecisionPanel";
 import { FibPanel } from "@/components/FibPanel";
+import { LivePrice } from "@/components/LivePrice";
 import { PriceChart } from "@/components/PriceChart";
 import { SignalStrip } from "@/components/SignalStrip";
 import { StageStepper } from "@/components/StageStepper";
 import { StatRow, StatTile } from "@/components/StatTile";
 import { StockSearch } from "@/components/StockSearch";
 import { api } from "@/lib/api";
-import { changeColor, fmtMoney, fmtNum, fmtPct } from "@/lib/format";
+import { fmtMoney, fmtNum, fmtPct } from "@/lib/format";
 import { useAnalysisStream } from "@/lib/useAnalysisStream";
-import type { Bar, Horizon, Indicators, Quote } from "@/lib/types";
+import { useLiveQuote } from "@/lib/useLiveQuote";
+import type { Bar, Horizon, Indicators } from "@/lib/types";
 
 const HORIZONS: { value: Horizon; hint: string }[] = [
   { value: "短线", hint: "1-5 个交易日" },
@@ -45,10 +47,12 @@ function AnalyzeInner() {
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [quote, setQuote] = useState<Quote | null>(null);
   const [bars, setBars] = useState<Bar[]>([]);
   const [indicators, setIndicators] = useState<Indicators | null>(null);
 
+  // 价格单独走实时轮询；K线和指标是日线级别的，没必要跟着刷
+  const live = useLiveQuote(symbol);
+  const quote = live.quote;
   const stream = useAnalysisStream(runId);
 
   // 换标的时清掉上一次的结果
@@ -58,19 +62,16 @@ function AnalyzeInner() {
 
   useEffect(() => {
     if (!symbol) {
-      setQuote(null);
       setBars([]);
       setIndicators(null);
       return;
     }
     let alive = true;
     void Promise.all([
-      api.quote(symbol).catch(() => null),
       api.bars(symbol, 250).catch(() => [] as Bar[]),
       api.indicators(symbol).catch(() => null),
-    ]).then(([q, b, i]) => {
+    ]).then(([b, i]) => {
       if (!alive) return;
-      setQuote(q);
       setBars(b);
       setIndicators(i);
     });
@@ -115,32 +116,14 @@ function AnalyzeInner() {
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-4 md:px-6 md:py-6">
-      {/* ---------- 标的头部 ---------- */}
-      <div className="mb-4">
-        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h1 className="text-lg font-semibold">
-            {quote?.name || stream.name || symbol}
-          </h1>
-          <span className="text-sm text-[var(--muted)]">{symbol}</span>
-          {indicators?.fib && (
-            <span className="rounded bg-[var(--surface-2)] px-1.5 py-0.5 text-[10px] text-[var(--muted)]">
-              {indicators.fib.direction}段 · 已回撤{" "}
-              {fmtNum(indicators.fib.retracement_pct, 0)}%
-            </span>
-          )}
-        </div>
-        {quote && (
-          <div className="mt-1.5 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            {/* 大号独立数字用比例字体，不用 tabular */}
-            <span className={`text-3xl font-semibold leading-none ${changeColor(quote.change_pct)}`}>
-              {fmtNum(quote.price)}
-            </span>
-            <span className={`text-sm font-medium ${changeColor(quote.change_pct)}`}>
-              {fmtPct(quote.change_pct)}
-            </span>
-          </div>
+      {/* ---------- 标的头部（实时价格） ---------- */}
+      <LivePrice symbol={symbol} fallbackName={stream.name} live={live}>
+        {indicators?.fib && (
+          <span className="rounded bg-[var(--surface-2)] px-1.5 py-0.5 text-[10px] text-[var(--muted)]">
+            {indicators.fib.direction}段 · 已回撤 {fmtNum(indicators.fib.retracement_pct, 0)}%
+          </span>
         )}
-      </div>
+      </LivePrice>
 
       {/* ---------- 关键指标统计块 ---------- */}
       {(quote || indicators) && (

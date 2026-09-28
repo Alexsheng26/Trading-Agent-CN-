@@ -98,6 +98,53 @@ export interface Indicators {
   patterns: string[];
 }
 
+/** 交易时段。后端用固定 UTC+8 计算，不含法定节假日 */
+export interface SessionInfo {
+  phase: "盘前" | "集合竞价" | "连续竞价" | "午间休市" | "已收盘" | "非交易日";
+  /** 价格是否可能变动。false 时前端不应轮询 */
+  is_live: boolean;
+  /** 建议轮询间隔（秒）。非交易时段为 null */
+  poll_interval: number | null;
+  /** 下一次时段变化的时刻（带 +08:00） */
+  next_change: string | null;
+  /** 服务端判断时所用的北京时间，用来校正浏览器时钟偏差 */
+  as_of: string;
+  note: string;
+}
+
+/** 本地代码目录状态。按名称搜索靠它 —— count=0 时只能按代码搜 */
+export interface SymbolIndexStatus {
+  count: number;
+  updated_at: string | null;
+  /** 超过 TTL，需要补一次新股 */
+  stale: boolean;
+  /** 后台正在重建 */
+  refreshing: boolean;
+  /** 目录数据来自哪些数据源 */
+  sources: string[];
+}
+
+export interface InterfaceProbe {
+  name: string;
+  status: "正常" | "空结果" | "失败" | "超时" | "不支持" | "跳过";
+  detail: string;
+}
+
+export interface ProviderProbe {
+  provider: string;
+  dependency_ok: boolean;
+  dependency_error?: string;
+  interfaces: InterfaceProbe[];
+}
+
+export interface Diagnosis {
+  /** 探测时刻（北京时间） */
+  checked_at: string;
+  /** 数据源尝试顺序，前面的失败才降级到后面 */
+  order: string[];
+  providers: ProviderProbe[];
+}
+
 export interface IndexQuote {
   code: string;
   name: string;

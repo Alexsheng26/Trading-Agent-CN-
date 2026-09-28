@@ -26,6 +26,7 @@ from app.core.errors import (
 )
 from app.core.logging import setup_logging
 from app.db.session import dispose_db, init_db
+from app.services.symbol_index import refresh_if_needed
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +39,10 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     if settings.llm_provider == "echo":
         log.warning("⚠️  当前为离线桩模型（LLM_PROVIDER=echo），分析结果无参考价值")
     await init_db()
+    # 建"全市场代码-名称目录"：按名称搜索靠它。
+    # 这里只查一下目录状态（本地 SQL，很快）并派一个后台任务 ——
+    # 真正拉 5000 行不在启动路径上，失败也只是退回实时查询。
+    await refresh_if_needed()
     yield
     await dispose_db()
     log.info("已关闭")

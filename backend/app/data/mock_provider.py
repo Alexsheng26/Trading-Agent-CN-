@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import math
 import random
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
+from app.core.clock import now_utc
 from app.data.base import (
     ALL_CAPABILITIES,
     Bar,
@@ -113,7 +114,7 @@ class MockProvider:
             pb=round(rng.uniform(0.8, 12), 2),
             total_market_cap=last.close * shares,
             float_market_cap=last.close * shares * 0.8,
-            updated_at=datetime.now(),
+            updated_at=now_utc(),
         )
 
     # 随机游走的锚点：所有窗口都从这天开始生成再切片，
@@ -211,7 +212,7 @@ class MockProvider:
             f"券商研报：维持{name}“增持”评级",
         ]
         rng.shuffle(templates)
-        now = datetime.now()
+        now = now_utc()
         return [
             NewsItem(
                 title=t,

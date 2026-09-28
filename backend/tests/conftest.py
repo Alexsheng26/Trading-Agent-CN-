@@ -22,6 +22,9 @@ os.environ.update(
     DEBATE_ROUNDS="1",
     APP_ENV="dev",
     LOG_LEVEL="WARNING",
+    # 后台建目录的任务会和断言抢时间，测试里显式关掉，
+    # 需要目录的测试自己调 symbol_index.refresh()
+    SYMBOL_INDEX_AUTOREFRESH="false",
 )
 
 
@@ -32,10 +35,12 @@ def _reset_singletons() -> Iterator[None]:
     from app.data.cache import cache
     from app.data.registry import reset_registry
     from app.llm.factory import reset_llm
+    from app.services.symbol_index import reset_state
 
     get_settings.cache_clear()
     reset_registry()
     reset_llm()
+    reset_state()
     cache.clear()
     yield
     cache.clear()

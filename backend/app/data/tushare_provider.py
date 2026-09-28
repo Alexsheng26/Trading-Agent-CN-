@@ -17,6 +17,7 @@ import logging
 from datetime import date, datetime
 from typing import Any
 
+from app.core.clock import now_utc
 from app.core.errors import ProviderUnavailable
 from app.data.base import (
     CAP_BARS,
@@ -166,7 +167,7 @@ class TushareProvider:
             pb=_to_float(_get(b, "pb")),
             total_market_cap=_scale(_get(b, "total_mv"), 1e4),  # 万元 -> 元
             float_market_cap=_scale(_get(b, "circ_mv"), 1e4),
-            updated_at=datetime.now(),
+            updated_at=now_utc(),
         )
 
     async def daily_bars(

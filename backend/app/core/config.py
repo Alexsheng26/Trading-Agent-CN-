@@ -40,6 +40,11 @@ class Settings(BaseSettings):
     # 前端就会永远显示"搜索中…"。AKShare 底层是爬第三方站点，
     # 慢或者挂是常态，必须时间盒住。
     provider_timeout: int = 12
+    # 启动后在后台建立"全市场代码-名称目录"（按名称搜索靠它）。
+    # 测试里关掉：后台任务会和断言抢时间。
+    symbol_index_autorefresh: bool = True
+    # 目录多久算过期（小时）。A股每天有新股上市，一天一次足够。
+    symbol_index_ttl_hours: int = 24
 
     # ---------- LLM ----------
     llm_provider: LLMProvider = "echo"

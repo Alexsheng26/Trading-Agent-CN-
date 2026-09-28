@@ -87,3 +87,50 @@ export function fmtRelative(iso: string | null | undefined): string {
   if (days < 30) return `${days} 天前`;
   return fmtTime(iso);
 }
+
+/** 带符号的价格变动额，例如 +12.30 / -0.45 */
+export function fmtSigned(value: number | null | undefined, digits = 2): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  const sign = value > 0 ? "+" : value < 0 ? "-" : "";
+  return `${sign}${Math.abs(value).toFixed(digits)}`;
+}
+
+/**
+ * epoch 毫秒 -> 北京时间 HH:MM:SS。
+ * 固定按上海时区展示：用户在国外用这个工具时，看到的也该是交易所时间。
+ */
+export function fmtClock(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || Number.isNaN(ms)) return "—";
+  return new Date(ms).toLocaleTimeString("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+}
+
+/** 毫秒时长 -> "2 小时 13 分" / "13 分 20 秒"，给开盘倒计时用。 */
+export function fmtCountdown(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || Number.isNaN(ms) || ms <= 0) return "即将开始";
+  const totalMin = Math.floor(ms / 60_000);
+  const days = Math.floor(totalMin / 1440);
+  if (days >= 1) return `${days} 天 ${Math.floor((totalMin % 1440) / 60)} 小时`;
+  const hours = Math.floor(totalMin / 60);
+  if (hours >= 1) return `${hours} 小时 ${totalMin % 60} 分`;
+  if (totalMin >= 1) return `${totalMin} 分 ${Math.floor((ms % 60_000) / 1000)} 秒`;
+  return `${Math.max(Math.floor(ms / 1000), 1)} 秒`;
+}
+
+/** 交易时段对应的配色 class（背景 + 文字）。 */
+export function phaseColor(phase: string | null | undefined): string {
+  switch (phase) {
+    case "连续竞价":
+    case "集合竞价":
+      return "bg-[var(--up-soft)] text-[var(--up)]";
+    case "午间休市":
+      return "bg-[var(--warn-soft)] text-[var(--warn)]";
+    default:
+      return "bg-[var(--surface-2)] text-[var(--muted)]";
+  }
+}

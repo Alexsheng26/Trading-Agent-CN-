@@ -6,10 +6,13 @@ import type {
   AnalysisRun,
   AnalysisRunSummary,
   Bar,
+  Diagnosis,
   Indicators,
   IndexQuote,
   Quote,
+  SessionInfo,
   StockBasic,
+  SymbolIndexStatus,
   SystemStatus,
   WatchlistItem,
 } from "./types";
@@ -59,12 +62,31 @@ export const api = {
     request<StockBasic[]>(`/market/search?q=${encodeURIComponent(q)}&limit=${limit}`, {
       signal,
     }),
-  quote: (symbol: string) => request<Quote>(`/market/quote/${encodeURIComponent(symbol)}`),
+  quote: (symbol: string, signal?: AbortSignal) =>
+    request<Quote>(`/market/quote/${encodeURIComponent(symbol)}`, { signal }),
+  /** 批量行情：自选股列表和实时轮询用，20 只票 1 个请求而不是 20 个 */
+  quotes: (symbols: string[], signal?: AbortSignal) =>
+    request<Quote[]>(`/market/quotes?symbols=${encodeURIComponent(symbols.join(","))}`, {
+      signal,
+    }),
   bars: (symbol: string, days = 250) =>
     request<Bar[]>(`/market/bars/${encodeURIComponent(symbol)}?days=${days}`),
   indicators: (symbol: string) =>
     request<Indicators>(`/market/indicators/${encodeURIComponent(symbol)}`),
-  indexes: () => request<IndexQuote[]>("/market/indexes"),
+  indexes: (signal?: AbortSignal) => request<IndexQuote[]>("/market/indexes", { signal }),
+  /** 当前交易时段。前端据此决定要不要轮询 —— 收盘后刷价格毫无意义 */
+  session: (signal?: AbortSignal) => request<SessionInfo>("/market/session", { signal }),
+  /** 数据源逐接口探测。会真的发网络请求，很慢，只在排查时手动调用 */
+  diagnose: (signal?: AbortSignal) => request<Diagnosis>("/market/diagnose", { signal }),
+  /** 本地代码目录状态：按名称搜索能不能用，看这个 */
+  symbolsStatus: (signal?: AbortSignal) =>
+    request<SymbolIndexStatus>("/market/symbols/status", { signal }),
+  /** 重建代码目录。wait=true 会一直等到建完（可能要几十秒） */
+  refreshSymbols: (wait = false, signal?: AbortSignal) =>
+    request<SymbolIndexStatus & { started: boolean; waited: boolean; changed?: number }>(
+      `/market/symbols/refresh?wait=${wait}`,
+      { method: "POST", signal },
+    ),
 
   // ---------- 分析 ----------
   startAnalysis: (symbol: string, horizon: string, userNote = "") =>

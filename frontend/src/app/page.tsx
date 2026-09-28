@@ -3,27 +3,39 @@
 // 首页：大盘 + 自选股。手机上是卡片列表，桌面上是表格。
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { SessionBadge, TickPrice } from "@/components/LivePrice";
 import { StockSearch } from "@/components/StockSearch";
 import { ApiError, api } from "@/lib/api";
-import { changeColor, fmtMoney, fmtNum, fmtPct } from "@/lib/format";
-import type { IndexQuote, WatchlistItem } from "@/lib/types";
+import { changeColor, fmtClock, fmtMoney, fmtNum, fmtPct } from "@/lib/format";
+import { useLiveIndexes, useLiveQuotes } from "@/lib/useLiveQuote";
+import type { Quote, WatchlistItem } from "@/lib/types";
 
 export default function HomePage() {
   const [items, setItems] = useState<WatchlistItem[]>([]);
-  const [indexes, setIndexes] = useState<IndexQuote[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
+
+  // 自选股的名称/备注来自数据库，价格走实时轮询 —— 两者刷新节奏完全不同
+  const symbols = useMemo(() => items.map((i) => i.symbol), [items]);
+  const live = useLiveQuotes(symbols);
+  const market = useLiveIndexes();
+  const indexes = market.indexes;
+
+  // 实时价格覆盖数据库里那份快照，取不到时退回快照，不让列表变空
+  const rows = useMemo(
+    () =>
+      items.map((item) => ({
+        ...item,
+        quote: live.quotes[item.symbol] ?? item.quote ?? null,
+      })),
+    [items, live.quotes],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [wl, idx] = await Promise.all([
-        api.watchlist(true),
-        api.indexes().catch(() => [] as IndexQuote[]),
-      ]);
-      setItems(wl);
-      setIndexes(idx);
+      setItems(await api.watchlist(true));
       setMessage(null);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "加载失败");
@@ -59,6 +71,15 @@ export default function HomePage() {
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-4 md:px-6 md:py-6">
       {/* 大盘 */}
+      <div className="mb-2 flex items-center gap-2">
+        <SessionBadge session={market.session} polling={market.polling} />
+        {live.updatedAt && (
+          <span className="tabular text-[10px] text-[var(--muted)]">
+            行情更新于 {fmtClock(live.updatedAt)}
+          </span>
+        )}
+      </div>
+
       {indexes.length > 0 && (
         <div className="no-scrollbar -mx-4 mb-4 flex gap-2 overflow-x-auto px-4 md:mx-0 md:px-0">
           {indexes.map((idx) => (
@@ -96,7 +117,7 @@ export default function HomePage() {
         <>
           {/* 手机：卡片 */}
           <ul className="space-y-2 md:hidden">
-            {items.map((item) => (
+            {rows.map((item) => (
               <li key={item.id}>
                 <WatchCard item={item} onRemove={() => void remove(item.id)} />
               </li>
@@ -118,7 +139,7 @@ export default function HomePage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)] bg-[var(--surface)]">
-                {items.map((item) => (
+                {rows.map((item) => (
                   <tr key={item.id} className="hover:bg-[var(--surface-2)]">
                     <td className="px-4 py-3">
                       <Link href={`/analyze?symbol=${item.symbol}`} className="block">
@@ -128,7 +149,9 @@ export default function HomePage() {
                         </span>
                       </Link>
                     </td>
-                    <td className="tabular px-4 py-3 text-right">{fmtNum(item.quote?.price)}</td>
+                    <td className="px-4 py-3 text-right">
+                      <TickPrice value={item.quote?.price} />
+                    </td>
                     <td className={`tabular px-4 py-3 text-right ${changeColor(item.quote?.change_pct)}`}>
                       {fmtPct(item.quote?.change_pct)}
                     </td>
@@ -167,7 +190,13 @@ export default function HomePage() {
   );
 }
 
-function WatchCard({ item, onRemove }: { item: WatchlistItem; onRemove: () => void }) {
+function WatchCard({
+  item,
+  onRemove,
+}: {
+  item: WatchlistItem & { quote: Quote | null };
+  onRemove: () => void;
+}) {
   return (
     <div className="flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
       <Link href={`/analyze?symbol=${item.symbol}`} className="min-w-0 flex-1">
@@ -178,7 +207,9 @@ function WatchCard({ item, onRemove }: { item: WatchlistItem; onRemove: () => vo
         </div>
       </Link>
       <div className="shrink-0 text-right">
-        <div className="tabular text-[15px] font-medium">{fmtNum(item.quote?.price)}</div>
+        <div className="text-[15px] font-medium">
+          <TickPrice value={item.quote?.price} />
+        </div>
         <div className={`tabular text-xs ${changeColor(item.quote?.change_pct)}`}>
           {fmtPct(item.quote?.change_pct)}
         </div>

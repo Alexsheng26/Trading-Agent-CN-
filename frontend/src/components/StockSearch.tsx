@@ -2,6 +2,7 @@
 
 // 股票搜索框。支持代码和名称，输入防抖 300ms。
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import type { StockBasic } from "@/lib/types";
@@ -20,6 +21,9 @@ export function StockSearch({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  // 按名称搜不到东西时，先确认是不是本地代码目录还没建好 ——
+  // 不解释原因的"没找到"最让人困惑
+  const [indexMissing, setIndexMissing] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -43,6 +47,15 @@ export function StockSearch({
         .then((r) => {
           setResults(r);
           setOpen(true);
+          // 只在"按名称搜、且没结果"时才去问一下目录状态
+          if (r.length === 0 && !/^\d{1,6}$/.test(keyword)) {
+            void api
+              .symbolsStatus()
+              .then((st) => setIndexMissing(st.count === 0))
+              .catch(() => setIndexMissing(false));
+          } else {
+            setIndexMissing(false);
+          }
         })
         .catch((err: unknown) => {
           setResults([]);
@@ -144,7 +157,20 @@ export function StockSearch({
               : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted)]"
           }`}
         >
-          {error ?? "没找到匹配的股票。试试完整代码，如 600519。"}
+          {error ??
+            (indexMissing ? (
+              <span>
+                本地代码目录还没建起来，暂时只能按 6 位代码搜索（如 600519）。
+                <br />
+                原因通常是数据源取不到全市场列表 ——{" "}
+                <Link href="/settings" className="underline">
+                  去设置页看诊断
+                </Link>
+                。
+              </span>
+            ) : (
+              "没找到匹配的股票。试试完整代码，如 600519。"
+            ))}
         </div>
       )}
     </div>
