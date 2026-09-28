@@ -8,6 +8,9 @@ import { AgentCard } from "@/components/AgentCard";
 import { DecisionPanel } from "@/components/DecisionPanel";
 import { FibPanel } from "@/components/FibPanel";
 import { PriceChart } from "@/components/PriceChart";
+import { SignalStrip } from "@/components/SignalStrip";
+import { StageStepper } from "@/components/StageStepper";
+import { StatRow, StatTile } from "@/components/StatTile";
 import { StockSearch } from "@/components/StockSearch";
 import { api } from "@/lib/api";
 import { changeColor, fmtMoney, fmtNum, fmtPct } from "@/lib/format";
@@ -118,23 +121,52 @@ function AnalyzeInner() {
           <h1 className="text-lg font-semibold">
             {quote?.name || stream.name || symbol}
           </h1>
-          <span className="tabular text-sm text-[var(--muted)]">{symbol}</span>
+          <span className="text-sm text-[var(--muted)]">{symbol}</span>
+          {indicators?.fib && (
+            <span className="rounded bg-[var(--surface-2)] px-1.5 py-0.5 text-[10px] text-[var(--muted)]">
+              {indicators.fib.direction}段 · 已回撤{" "}
+              {fmtNum(indicators.fib.retracement_pct, 0)}%
+            </span>
+          )}
         </div>
         {quote && (
-          <div className="mt-1 flex flex-wrap items-baseline gap-x-4 gap-y-1">
-            <span className={`tabular text-2xl font-semibold ${changeColor(quote.change_pct)}`}>
+          <div className="mt-1.5 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            {/* 大号独立数字用比例字体，不用 tabular */}
+            <span className={`text-3xl font-semibold leading-none ${changeColor(quote.change_pct)}`}>
               {fmtNum(quote.price)}
             </span>
-            <span className={`tabular text-sm ${changeColor(quote.change_pct)}`}>
+            <span className={`text-sm font-medium ${changeColor(quote.change_pct)}`}>
               {fmtPct(quote.change_pct)}
-            </span>
-            <span className="tabular text-xs text-[var(--muted)]">
-              成交额 {fmtMoney(quote.amount)} · 换手 {fmtPct(quote.turnover_rate, false)} · PE{" "}
-              {fmtNum(quote.pe_ttm)}
             </span>
           </div>
         )}
       </div>
+
+      {/* ---------- 关键指标统计块 ---------- */}
+      {(quote || indicators) && (
+        <div className="mb-4">
+          <StatRow>
+            <StatTile label="成交额" value={fmtMoney(quote?.amount)} />
+            <StatTile label="换手率" value={fmtPct(quote?.turnover_rate, false)} />
+            <StatTile label="市盈率 TTM" value={fmtNum(quote?.pe_ttm)} />
+            <StatTile
+              label="20 日涨幅"
+              value={fmtPct(indicators?.return_20d)}
+              direction={indicators?.return_20d ?? null}
+            />
+            <StatTile
+              label="年化波动"
+              value={fmtPct(indicators?.volatility_20d, false)}
+              hint="20 日"
+            />
+            <StatTile
+              label="ATR 占比"
+              value={fmtPct(indicators?.atr_pct, false)}
+              hint="日均波幅"
+            />
+          </StatRow>
+        </div>
+      )}
 
       <PriceChart bars={bars} fib={indicators?.fib} showFib={showFib} />
 
@@ -222,6 +254,17 @@ function AnalyzeInner() {
         <div className="mt-5">
           <ConnectionBar state={stream} onRestart={() => setRunId(null)} />
 
+          {stream.pipeline.length > 0 && (
+            <div className="mt-3">
+              <StageStepper
+                pipeline={stream.pipeline}
+                agents={stream.agents}
+                currentStage={stream.currentStage}
+                finished={stream.finished}
+              />
+            </div>
+          )}
+
           {stream.dataWarnings.length > 0 && (
             <div className="mt-3 rounded-lg bg-[var(--warn-soft)] px-3 py-2 text-[11px] leading-relaxed text-[var(--warn)]">
               <strong>部分数据未取到</strong>
@@ -238,6 +281,11 @@ function AnalyzeInner() {
               <DecisionPanel decision={stream.decision} />
             </div>
           )}
+
+          {/* 倾向一览排在各智能体正文之前：先看整体分歧，再看谁怎么说 */}
+          <div className="mt-4">
+            <SignalStrip agents={stream.agents} />
+          </div>
 
           {stageOrder?.map((stage) => {
             const agents = stage.agents

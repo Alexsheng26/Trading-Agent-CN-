@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     tushare_token: str = ""
     quote_cache_ttl: int = 60
     history_cache_ttl: int = 3600
+    # 单个数据源单次调用的超时（秒）。超了就当该源失败、降级到下一个。
+    # 没有这个保护的话，一个卡住的数据源会把整个 HTTP 请求拖死 ——
+    # 前端就会永远显示"搜索中…"。AKShare 底层是爬第三方站点，
+    # 慢或者挂是常态，必须时间盒住。
+    provider_timeout: int = 12
 
     # ---------- LLM ----------
     llm_provider: LLMProvider = "echo"

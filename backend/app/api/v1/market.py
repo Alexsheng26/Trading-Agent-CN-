@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.core.errors import DataNotFound, SymbolError
 from app.data.registry import get_registry
-from app.data.symbols import normalize
+from app.data.symbols import normalize, try_normalize
 from app.schemas.market import BarOut, IndexQuoteOut, IndicatorsOut, QuoteOut, StockBasicOut
 from app.services.indicators import compute_snapshot
 from app.services.market_data import MarketDataService
@@ -29,11 +29,38 @@ async def search(
     q: str = Query(min_length=1, max_length=32, description="代码或名称关键词"),
     limit: int = Query(default=20, ge=1, le=50),
 ) -> list[StockBasicOut]:
+    """按代码或名称搜索。
+
+    输入合法股票代码时，**不依赖数据源也一定能返回** —— 代码规范化是纯本地
+    计算。这很重要：按名称搜索需要拉全市场快照（AKShare 那个接口 5000+ 行，
+    慢或挂都是常态），但用户输入 600519 这种明确代码时没理由陪着一起等。
+    """
+    direct = try_normalize(q)
+    hits: list[StockBasicOut] = []
+
     try:
         results = await get_registry().search(q, limit)
     except DataNotFound as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return [StockBasicOut(**asdict(r)) for r in results]
+        # 所有数据源都拿不到。若输入是合法代码，仍然放行，让用户能进详情页；
+        # 否则才报错。
+        if direct is None:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        results = []
+
+    hits = [StockBasicOut(**asdict(r)) for r in results]
+
+    # 代码直达：确保它出现在结果里，且排在第一位
+    if direct is not None and not any(h.symbol == direct.canonical for h in hits):
+        hits.insert(
+            0,
+            StockBasicOut(
+                symbol=direct.canonical,
+                name="",  # 数据源没返回名称时留空，前端显示代码
+                exchange=direct.exchange,
+                board=direct.board,
+            ),
+        )
+    return hits[:limit]
 
 
 @router.get("/quote/{symbol}", response_model=QuoteOut, summary="实时行情")

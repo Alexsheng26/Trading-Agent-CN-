@@ -55,8 +55,10 @@ export const api = {
   status: () => request<SystemStatus>("/status"),
 
   // ---------- 行情 ----------
-  search: (q: string, limit = 20) =>
-    request<StockBasic[]>(`/market/search?q=${encodeURIComponent(q)}&limit=${limit}`),
+  search: (q: string, limit = 20, signal?: AbortSignal) =>
+    request<StockBasic[]>(`/market/search?q=${encodeURIComponent(q)}&limit=${limit}`, {
+      signal,
+    }),
   quote: (symbol: string) => request<Quote>(`/market/quote/${encodeURIComponent(symbol)}`),
   bars: (symbol: string, days = 250) =>
     request<Bar[]>(`/market/bars/${encodeURIComponent(symbol)}?days=${days}`),

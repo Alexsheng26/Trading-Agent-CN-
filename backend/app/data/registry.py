@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import date
@@ -59,11 +60,12 @@ def build_provider(name: str, settings: Settings) -> DataProvider | None:
 class ProviderRegistry:
     """多数据源路由器。"""
 
-    def __init__(self, providers: list[DataProvider]) -> None:
+    def __init__(self, providers: list[DataProvider], timeout: float | None = None) -> None:
         self._providers = providers
         self._healthy: dict[str, bool] = {}
         # 记录最近一次每个能力实际由谁提供
         self.last_sources: dict[str, str] = {}
+        self._timeout = timeout if timeout is not None else get_settings().provider_timeout
 
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> ProviderRegistry:
@@ -76,7 +78,7 @@ class ProviderRegistry:
         if not providers:
             log.warning("DATA_PROVIDER_ORDER 为空，回落到 mock 数据源")
             providers.append(MockProvider())
-        return cls(providers)
+        return cls(providers, timeout=settings.provider_timeout)
 
     @property
     def provider_names(self) -> list[str]:
@@ -110,7 +112,15 @@ class ProviderRegistry:
             if not self._healthy.get(provider.name, False):
                 continue
             try:
-                result = await call(provider)
+                # 时间盒住每次尝试：卡住的数据源会拖死整个请求，
+                # 超时就当它失败，继续降级。
+                async with asyncio.timeout(self._timeout):
+                    result = await call(provider)
+            except TimeoutError:
+                msg = f"超过 {self._timeout} 秒无响应"
+                attempts.append(f"{provider.name}: {msg}")
+                log.warning("%s 的 %s %s，降级尝试下一个", provider.name, capability, msg)
+                continue
             except (ProviderUnavailable, CapabilityNotSupported) as exc:
                 attempts.append(f"{provider.name}: {exc}")
                 log.info("%s 的 %s 不可用，降级尝试下一个：%s", provider.name, capability, exc)

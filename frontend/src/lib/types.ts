@@ -177,6 +177,10 @@ export interface WatchlistItem {
 
 export interface SystemStatus {
   app_env: string;
+  /** 各维度最近一次实际命中的数据源。healthcheck 只说明依赖装好了，这个才是地面真相 */
+  active_sources?: Record<string, string>;
+  /** 是否有任何维度落到了模拟数据上 */
+  using_mock_data?: boolean;
   llm: {
     provider: string;
     model: string;

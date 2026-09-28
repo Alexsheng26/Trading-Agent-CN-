@@ -35,8 +35,18 @@ async def status() -> dict:
         for name in registry.provider_names
     ]
 
+    # healthcheck() 只说明"依赖装好了"，不代表调用真能成功 ——
+    # AKShare 模块在、但接口全挂的情况很常见。所以额外给出
+    # **最近一次实际命中的数据源**，这才是地面真相。
+    active = dict(registry.last_sources)
+    using_mock = "mock" in active.values()
+
     return {
         "app_env": settings.app_env,
+        "active_sources": active,
+        # 前端据此给出醒目警示：模拟数据是程序生成的假数字，
+        # 在金融工具里被误当成真实行情后果很严重。
+        "using_mock_data": using_mock,
         "llm": {
             "provider": settings.llm_provider,
             "model": (

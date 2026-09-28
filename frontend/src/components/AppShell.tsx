@@ -22,8 +22,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<SystemStatus | null>(null);
 
   useEffect(() => {
-    api.status().then(setStatus).catch(() => setStatus(null));
-  }, []);
+    const load = () => {
+      api.status().then(setStatus).catch(() => setStatus(null));
+    };
+
+    // 分三段查：
+    // 挂载时 —— 拿模型/数据源配置，用于侧边栏；
+    // 4 秒后 —— 此时页面的首批数据请求已经完成，后端才知道实际命中了哪个源。
+    //   只在挂载时查一次的话 last_sources 还是空的，降级警示条根本不会出现（竞态）；
+    // 之后每 30 秒 —— 跟进运行期间发生的降级。
+    load();
+    const kick = setTimeout(load, 4000);
+    const timer = setInterval(load, 30000);
+    return () => {
+      clearTimeout(kick);
+      clearInterval(timer);
+    };
+  }, [pathname]);
 
   const isActive = (href: string) =>
     href === "/" ? pathname === "/" : pathname.startsWith(href);
@@ -71,6 +86,39 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           )}
         </header>
 
+        {/* 模拟数据警示。
+            这是金融工具里最要紧的一条：模拟行情是程序生成的假数字，
+            被误当成真实行情后果很严重，所以必须不可忽视地摆在内容上方，
+            而不是藏在设置页里。 */}
+        {status?.using_mock_data && (
+          <div className="border-b border-[var(--warn)] bg-[var(--warn-soft)] px-4 py-2.5 md:px-6">
+            <div className="flex items-start gap-2 text-[var(--warn)]">
+              <svg viewBox="0 0 16 16" className="mt-[2px] h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+                <path d="M8 5.5v4M8 11.5h.01" />
+                <circle cx="8" cy="8" r="6.5" />
+              </svg>
+              <div className="min-w-0 text-xs leading-relaxed">
+                <strong>当前显示的部分数据是模拟数据</strong>
+                （真实数据源取数失败，已自动降级）。
+                <span className="text-[var(--text)]">
+                  {" "}
+                  这些价格和指标都是程序生成的假数字，不要用于任何判断。
+                </span>
+                {/* 数据源明细是排查用的，手机上收起来 ——
+                    核心警告要醒目，但不该占掉三分之一屏 */}
+                {status.active_sources && (
+                  <div className="mt-0.5 hidden text-[11px] opacity-80 sm:block">
+                    实际数据源：
+                    {Object.entries(status.active_sources)
+                      .map(([k, v]) => `${k}=${v}`)
+                      .join("、")}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         <main className="min-w-0 flex-1 pb-[calc(4.5rem+var(--safe-bottom))] md:pb-0">
           {children}
         </main>
@@ -113,11 +161,15 @@ function StubBadge({ status, className = "" }: { status: SystemStatus; className
         <div className="text-[var(--muted)]">模型</div>
         <div className="mt-0.5 font-medium">{status.llm.model}</div>
         <div className="mt-1.5 text-[var(--muted)]">
+          {/* 显示实际命中的源，而不是 healthy 列表 ——
+              后者只说明依赖装好了，接口全挂时也是 true，会误导 */}
           数据源{" "}
-          {status.data_providers
-            .filter((p) => p.healthy)
-            .map((p) => p.name)
-            .join(" / ") || "无可用"}
+          {Object.keys(status.active_sources ?? {}).length > 0
+            ? [...new Set(Object.values(status.active_sources ?? {}))].join(" / ")
+            : status.data_providers
+                .filter((p) => p.healthy)
+                .map((p) => p.name)
+                .join(" / ") + "（待验证）"}
         </div>
       </div>
     );
