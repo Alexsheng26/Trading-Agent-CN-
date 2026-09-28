@@ -130,30 +130,113 @@ class AkshareProvider:
         )
 
     async def quote(self, symbol: Symbol) -> Quote:
-        df = await self._spot()
-        match = df[df["代码"].astype(str).str.zfill(6) == symbol.code]
-        if match.empty:
+        """单只股票的实时行情。
+
+        **刻意不走全市场快照。** `stock_zh_a_spot_em` 内部按每页 100 条翻页，
+        A股 5400 多只要翻 54 页，而且 akshare 在每页之间会 sleep 0.5-1.5 秒 ——
+        一次调用要 60-90 秒，在任何合理的请求超时下都不可能成功。
+        （这正是"价格全是模拟数据"的真正原因：快照每次都超时，
+        于是每次都降级到 mock。）
+
+        改用 `stock_bid_ask_em`：单只股票、单个请求、不翻页不睡眠，一秒级返回。
+        代价是它只给盘口和量价，不给名称和估值 ——
+        名称走 `stock_individual_info_em`（单请求且强缓存），
+        市盈率/市净率则确实拿不到，按"数据缺失"如实上报，不猜不编。
+
+        注意：该接口判断市场只看代码是否以 6 开头，北交所（8/4 开头）会被
+        当成深市，查不到数据 —— 那种情况下它会取值失败并抛出，registry 照常
+        降级到下一个数据源，不会返回错的价格。
+        """
+        raw = await self._call("stock_bid_ask_em", symbol=symbol.code)
+        if raw is None or raw.empty:
             raise ProviderUnavailable(
-                f"akshare 实时行情里没有 {symbol.canonical}（可能停牌或已退市）"
+                f"akshare 盘口接口没有 {symbol.canonical}（可能停牌或已退市）"
             )
-        row = match.iloc[0]
+
+        # 该接口返回的是 item/value 两列的竖表，转成字典好取
+        fields = {str(r["item"]): r["value"] for _, r in raw.iterrows()}
+        price = _to_float(fields.get("最新"))
+        prev_close = _to_float(fields.get("昨收"))
+        if price is None or price <= 0:
+            # 停牌时最新价可能是 0，用昨收兜底，免得界面显示 0.00
+            price = prev_close
+        if price is None:
+            raise ProviderUnavailable(f"akshare 没返回 {symbol.canonical} 的价格")
+
+        change_pct = _to_float(fields.get("涨幅"))
+        if change_pct is None and prev_close:
+            change_pct = round((price - prev_close) / prev_close * 100, 2)
+
+        basic = await self._basic_info(symbol)
+        valuation = await self._valuation(symbol)
+        # 总手的单位是"手"，1 手 = 100 股
+        volume_lots = _to_float(fields.get("总手"))
+
         return Quote(
             symbol=symbol.canonical,
-            name=str(_pick(row, "名称") or ""),
-            price=_to_float(_pick(row, "最新价")) or 0.0,
-            prev_close=_to_float(_pick(row, "昨收")),
-            open=_to_float(_pick(row, "今开")),
-            high=_to_float(_pick(row, "最高")),
-            low=_to_float(_pick(row, "最低")),
-            change_pct=_to_float(_pick(row, "涨跌幅")),
-            volume=_to_float(_pick(row, "成交量")),
-            amount=_to_float(_pick(row, "成交额")),
-            turnover_rate=_to_float(_pick(row, "换手率")),
-            pe_ttm=_to_float(_pick(row, "市盈率-动态", "市盈率")),
-            pb=_to_float(_pick(row, "市净率")),
-            total_market_cap=_to_float(_pick(row, "总市值")),
-            float_market_cap=_to_float(_pick(row, "流通市值")),
+            name=str(basic.get("股票简称") or ""),
+            price=price,
+            prev_close=prev_close,
+            open=_to_float(fields.get("今开")),
+            high=_to_float(fields.get("最高")),
+            low=_to_float(fields.get("最低")),
+            change_pct=change_pct,
+            volume=volume_lots * 100 if volume_lots is not None else None,
+            amount=_to_float(fields.get("金额")),
+            turnover_rate=_to_float(fields.get("换手")),
+            # 盘口接口不含估值，另取一次估值表（单请求、按小时缓存）。
+            # 取不到就是 None，不猜不编。
+            pe_ttm=_scale_to_price(valuation.get("pe_ttm"), valuation.get("close"), price),
+            pb=_scale_to_price(valuation.get("pb"), valuation.get("close"), price),
+            total_market_cap=_to_float(basic.get("总市值")),
+            float_market_cap=_to_float(basic.get("流通市值")),
             updated_at=now_utc(),
+        )
+
+    async def _valuation(self, symbol: Symbol) -> dict[str, float | None]:
+        """市盈率 / 市净率。
+
+        `stock_bid_ask_em` 不给估值，这里单独取一次东财的估值表
+        （单请求、不翻页）。它是**日频**数据，最后一行是最近一个交易日收盘口径，
+        所以按小时缓存就够，不必跟着行情每 5 秒刷。
+        """
+        from app.core.config import get_settings  # noqa: PLC0415 —— 避免循环导入
+        from app.data.cache import cache  # noqa: PLC0415
+
+        async def load() -> dict[str, float | None]:
+            try:
+                df = await self._call("stock_value_em", symbol=symbol.code)
+            except ProviderUnavailable:
+                return {}  # 估值取不到不该让整条行情失败
+            if df is None or df.empty:
+                return {}
+            row = df.iloc[-1]  # 该接口按日期升序，最后一行最新
+            return {
+                "pe_ttm": _to_float(_pick(row, "PE(TTM)")),
+                "pb": _to_float(_pick(row, "市净率")),
+                "close": _to_float(_pick(row, "当日收盘价")),
+            }
+
+        return await cache.get_or_set(
+            f"akshare:valuation:{symbol.code}", get_settings().history_cache_ttl, load
+        )
+
+    async def _basic_info(self, symbol: Symbol) -> dict[str, Any]:
+        """个股基本信息（名称/市值/行业）。单请求，强缓存 —— 这些一天都不会变。"""
+        from app.core.config import get_settings  # noqa: PLC0415 —— 避免循环导入
+        from app.data.cache import cache  # noqa: PLC0415
+
+        async def load() -> dict[str, Any]:
+            try:
+                df = await self._call("stock_individual_info_em", symbol=symbol.akshare)
+            except ProviderUnavailable:
+                return {}  # 名称拿不到不该让整个行情失败
+            if df is None or df.empty:
+                return {}
+            return {str(r["item"]): r["value"] for _, r in df.iterrows()}
+
+        return await cache.get_or_set(
+            f"akshare:info:{symbol.code}", get_settings().history_cache_ttl, load
         )
 
     async def daily_bars(
@@ -275,28 +358,59 @@ class AkshareProvider:
             )
         return flows
 
+    #: 首页要展示的大盘指数。**以代码为准**，名称只作兜底 ——
+    #: 上游的指数名称写法会变（"沪深300" / "沪深 300"），代码不会。
+    #: 之前只按名称精确匹配，一旦对不上就筛出空列表，registry 把空结果当失败，
+    #: 于是整条大盘数据降级到假数据，而真实原因只是少了一个空格。
+    _WANTED_INDEXES = {
+        "000001": "上证指数",
+        "399001": "深证成指",
+        "399006": "创业板指",
+        "000300": "沪深300",
+        "000688": "科创50",
+    }
+
     async def index_quotes(self) -> list[IndexQuote]:
         df = await self._call("stock_zh_index_spot_em", symbol="沪深重要指数")
-        wanted = {"上证指数", "深证成指", "创业板指", "沪深300", "科创50"}
+        wanted_names = set(self._WANTED_INDEXES.values())
         out: list[IndexQuote] = []
         for _, row in df.iterrows():
             name = str(_pick(row, "名称") or "")
-            if name not in wanted:
+            code = str(_pick(row, "代码") or "").zfill(6)
+            if code not in self._WANTED_INDEXES and name not in wanted_names:
                 continue
             out.append(
                 IndexQuote(
-                    code=str(_pick(row, "代码") or ""),
-                    name=name,
+                    code=code,
+                    # 上游没给名称时用我们自己的叫法，别显示一串代码
+                    name=name or self._WANTED_INDEXES.get(code, code),
                     price=_to_float(_pick(row, "最新价")) or 0.0,
                     change_pct=_to_float(_pick(row, "涨跌幅")),
                 )
+            )
+        if not out and not df.empty:
+            # 接口有数据但一个都没匹配上：大概率是上游改了代码/名称。
+            # 把实际拿到的前几个名字写进报错，排查时一眼就能看出问题。
+            got = [
+                str(_pick(r, "名称") or _pick(r, "代码") or "?")
+                for _, r in df.head(6).iterrows()
+            ]
+            raise ProviderUnavailable(
+                f"akshare 指数列表里没有需要的指数，实际返回：{'、'.join(got)}"
             )
         return out
 
     # ---------------- 全市场快照（多个接口共用） ----------------
 
     async def _spot(self) -> Any:
-        """A股实时行情全表。一次请求 5000+ 行，务必走缓存。"""
+        """A股实时行情全表。
+
+        ⚠️ **极慢，只能在后台任务里用。** akshare 内部按每页 100 条翻页，
+        5400 多只股票要翻 54 页，且每页之间 sleep 0.5-1.5 秒 ——
+        单次调用 60-90 秒。放在请求路径上必然超时。
+        目前只有"按名称搜索"需要它，而那条路已经改成后台建本地代码目录
+        （见 services/symbol_index.py），请求侧查的是本地表。
+        """
         from app.core.config import get_settings  # noqa: PLC0415 —— 避免循环导入
         from app.data.cache import cache
 
@@ -323,6 +437,20 @@ def _pick(row: Any, *names: str) -> Any:
         except (KeyError, TypeError, ValueError):
             continue
     return None
+
+
+def _scale_to_price(ratio: float | None, base_price: float | None, price: float) -> float | None:
+    """把按收盘价算的估值倍数折算到当前价。
+
+    估值表是日频的，PE 用的是那天的收盘价。盘中价格动了，PE 也该跟着动 ——
+    盈利和股本不变，倍数就与价格成正比。
+    拿不到基准价就原样返回（宁可略旧，也不要没有）。
+    """
+    if ratio is None:
+        return None
+    if not base_price or base_price <= 0 or price <= 0:
+        return ratio
+    return round(ratio * price / base_price, 2)
 
 
 def _to_float(value: Any) -> float | None:

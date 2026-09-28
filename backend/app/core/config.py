@@ -29,8 +29,13 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./data/trading_agent.db"
 
     # ---------- 数据源 ----------
+    # 刻意**不含 mock**：mock 是程序生成的假行情，在一个会输出买卖点位的
+    # 工具里被当成真实数据，后果很严重（本项目真的发生过：全市场快照每次
+    # 超时，于是每次静默降级到 mock，用户看到"华宝股份 299.42"还拿到了
+    # 一整套止盈止损）。取不到真数据就该报错，不该编一个。
+    # 要离线演示时显式写 DATA_PROVIDER_ORDER=mock。
     data_provider_order: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: ["akshare", "tushare", "mock"]
+        default_factory=lambda: ["akshare", "tushare"]
     )
     tushare_token: str = ""
     quote_cache_ttl: int = 60
@@ -45,6 +50,9 @@ class Settings(BaseSettings):
     symbol_index_autorefresh: bool = True
     # 目录多久算过期（小时）。A股每天有新股上市，一天一次足够。
     symbol_index_ttl_hours: int = 24
+    # 建目录时给数据源的超时（秒）。全市场列表本身就要 60-90 秒，
+    # 不能用 PROVIDER_TIMEOUT 那个给交互接口准备的小数值。
+    symbol_index_timeout: int = 240
 
     # ---------- LLM ----------
     llm_provider: LLMProvider = "echo"

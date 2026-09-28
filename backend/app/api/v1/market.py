@@ -9,7 +9,7 @@ from datetime import date, timedelta
 from fastapi import APIRouter, HTTPException, Query
 
 from app.core.errors import DataNotFound, SymbolError
-from app.data.registry import get_registry
+from app.data.registry import get_registry, short_error
 from app.data.symbols import normalize, try_normalize
 from app.schemas.market import BarOut, IndexQuoteOut, IndicatorsOut, QuoteOut, StockBasicOut
 from app.services import symbol_index
@@ -238,19 +238,30 @@ async def quotes(
         return []
 
     syms = [s for s in (try_normalize(x) for x in raw) if s is not None]
+    if not syms:
+        return []
     registry = get_registry()
+    failures: list[str] = []
 
     async def one(sym):  # type: ignore[no-untyped-def]
         try:
             return await registry.quote(sym)
-        except (DataNotFound, SymbolError):
+        except (DataNotFound, SymbolError) as exc:
+            failures.append(str(exc))
             return None
 
     results = await asyncio.gather(*(one(s) for s in syms))
+    quotes = [q for q in results if q is not None]
+
+    # 全军覆没要明确报错，不能返回 200 + 空数组。
+    # 返回空数组的话前端会以为"取数成功、只是没有数据"，
+    # 于是画出一排"—"还附上一句"行情更新于 22:04" —— 比报错更误导人。
+    # 个别票取不到（停牌、退市）仍然只是跳过，不影响其余。
+    if not quotes and failures:
+        raise HTTPException(status_code=503, detail=failures[0])
+
     return [
-        QuoteOut(**{k: v for k, v in asdict(q).items() if k != "volume"})
-        for q in results
-        if q is not None
+        QuoteOut(**{k: v for k, v in asdict(q).items() if k != "volume"}) for q in quotes
     ]
 
 
@@ -292,7 +303,7 @@ async def diagnose() -> dict:
             entry["dependency_ok"] = await provider.healthcheck()
         except Exception as exc:  # pragma: no cover
             entry["dependency_ok"] = False
-            entry["dependency_error"] = str(exc)
+            entry["dependency_error"] = short_error(exc)
 
         for cap, (label, call) in probes.items():
             if cap not in provider.capabilities:
@@ -314,7 +325,7 @@ async def diagnose() -> dict:
                 )
             except Exception as exc:
                 entry["interfaces"].append(
-                    {"name": label, "status": "失败", "detail": str(exc)[:300]}
+                    {"name": label, "status": "失败", "detail": short_error(exc)}
                 )
             else:
                 n = len(result) if isinstance(result, list) else 1

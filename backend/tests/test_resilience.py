@@ -152,3 +152,68 @@ def test_status_reports_actually_used_sources(client) -> None:  # type: ignore[n
 def test_status_exposes_provider_timeout(client) -> None:  # type: ignore[no-untyped-def]
     body = client.get("/api/v1/status").json()
     assert body["pipeline"]["timeout_sec"] > 0
+
+
+# ---------------------------------------------------------------- 绝不偷偷用假数据
+
+
+def test_unusable_provider_order_fails_loudly(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """配置里没有一个可用数据源时必须抛错，不能静默塞一个 mock 进去。
+
+    以前的行为是回落到 mock：`DATA_PROVIDER_ORDER` 写错一个字母，
+    用户就会拿到一整套程序编出来的行情，而界面上看起来一切正常 ——
+    在一个会输出买卖点位的工具里这是不可接受的。
+    """
+    import pytest as _pytest
+
+    from app.core.config import get_settings
+    from app.data.registry import ProviderRegistry
+
+    monkeypatch.setenv("DATA_PROVIDER_ORDER", "akshre,tushre")  # 故意拼错
+    get_settings.cache_clear()
+    with _pytest.raises(RuntimeError, match="没有一个可用的数据源"):
+        ProviderRegistry.from_settings(get_settings())
+    get_settings.cache_clear()
+
+
+def test_mock_is_not_in_default_provider_order(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """默认配置里不能有 mock —— 取不到真数据就该报错，不该编一个。"""
+    from app.core.config import Settings
+
+    monkeypatch.delenv("DATA_PROVIDER_ORDER", raising=False)
+    assert "mock" not in Settings().data_provider_order
+
+
+def test_short_error_strips_url_noise() -> None:
+    """数据源报错要能读。
+
+    requests 的连接错误会把整条 URL 连同上百个查询参数一起抛出来，
+    原样透给前端就是一屏乱码 —— 而现在取不到数据就会报错（不再降级到
+    假数据），这些提示是用户唯一的线索，必须人能看懂。
+    """
+    from app.data.registry import short_error
+
+    raw = (
+        "akshare.stock_bid_ask_em() 调用失败：HTTPSConnectionPool("
+        "host='push2.eastmoney.com', port=443): Max retries exceeded with url: "
+        "/api/qt/stock/get?fltt=2&invt=2&fields=" + "f120%2C" * 40
+        + " (Caused by NewConnectionError('unable to connect'))"
+    )
+    out = short_error(Exception(raw))
+
+    assert len(out) <= 181, f"太长了：{len(out)}"
+    assert "push2.eastmoney.com" in out, "必须保留是哪个域名连不上"
+    assert "stock_bid_ask_em" in out, "必须保留是哪个接口失败"
+    assert "f120%2C" not in out, "长查询串要被砍掉"
+
+
+def test_short_error_keeps_short_messages_intact() -> None:
+    from app.data.registry import short_error
+
+    assert short_error(Exception("akshare 未安装")) == "akshare 未安装"
+
+
+def test_short_error_collapses_newlines() -> None:
+    from app.data.registry import short_error
+
+    assert short_error(Exception("第一行\n  第二行\t第三行")) == "第一行 第二行 第三行"

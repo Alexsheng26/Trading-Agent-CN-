@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from datetime import date
 from typing import Any, TypeVar
@@ -44,6 +45,26 @@ log = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
+#: 单个数据源的报错在提示里最多保留多少字
+_ERROR_MAX_CHARS = 180
+
+
+def short_error(exc: object) -> str:
+    """把数据源的原始异常压成一句人能读的话。
+
+    requests 的连接错误会把整条 URL 连同上百个查询参数一起抛出来
+    （`fields=f120%2Cf121%2C...` 那种），原样透给前端就是一屏乱码，
+    真正有用的只有"连不上 push2.eastmoney.com"这一句。
+    完整信息仍然写日志，不丢。
+    """
+    text = re.sub(r"\s+", " ", str(exc)).strip()
+    # 砍掉长查询串，只留问号
+    text = re.sub(r"\?[^\s)\'\"]{40,}", "?…", text)
+    if len(text) > _ERROR_MAX_CHARS:
+        text = text[:_ERROR_MAX_CHARS].rstrip() + "…"
+    return text
+
+
 def build_provider(name: str, settings: Settings) -> DataProvider | None:
     match name.lower():
         case "akshare":
@@ -76,8 +97,15 @@ class ProviderRegistry:
             if provider is not None:
                 providers.append(provider)
         if not providers:
-            log.warning("DATA_PROVIDER_ORDER 为空，回落到 mock 数据源")
-            providers.append(MockProvider())
+            # 以前这里会静默塞一个 mock 进去。那是个很坑的行为：
+            # DATA_PROVIDER_ORDER 写错一个字母（akshre），用户就会拿到一整套
+            # 程序编出来的行情，而界面上看起来一切正常。
+            # 在一个会输出买卖点位的工具里，宁可起不来也不能编数据。
+            raise RuntimeError(
+                "DATA_PROVIDER_ORDER 里没有一个可用的数据源："
+                f"{settings.data_provider_order!r}。"
+                "可选值为 akshare / tushare / mock（mock 是假数据，仅用于离线看界面）。"
+            )
         return cls(providers, timeout=settings.provider_timeout)
 
     @property
@@ -101,11 +129,22 @@ class ProviderRegistry:
         call: Callable[[DataProvider], Awaitable[T]],
         *,
         allow_empty: bool = False,
+        attempt_timeout: float | None = None,
     ) -> T:
-        """按顺序尝试支持该能力的数据源，第一个成功的胜出。"""
+        """按顺序尝试支持该能力的数据源，第一个成功的胜出。
+
+        `attempt_timeout` 按次覆盖"每个数据源单次尝试"的预算。
+        注意它不是整个调用的超时 —— 从外面包一层 asyncio.timeout 会把
+        整条降级链一起掐掉，那就失去降级的意义了。少数接口天生就慢
+        （比如 AKShare 的全市场快照要翻 54 页、每页还 sleep 1 秒，
+        单次 60-90 秒），用默认的 12 秒去调等于永远失败。
+        这类调用只应出现在后台任务里，并显式给一个大超时。
+        """
         await self.health()
         attempts: list[str] = []  # 真尝试过、失败了的
         skipped: list[str] = []  # 压根没尝试的
+
+        budget = self._timeout if attempt_timeout is None else attempt_timeout
 
         for provider in self._providers:
             if capability not in provider.capabilities:
@@ -119,19 +158,19 @@ class ProviderRegistry:
             try:
                 # 时间盒住每次尝试：卡住的数据源会拖死整个请求，
                 # 超时就当它失败，继续降级。
-                async with asyncio.timeout(self._timeout):
+                async with asyncio.timeout(budget):
                     result = await call(provider)
             except TimeoutError:
-                msg = f"超过 {self._timeout} 秒无响应"
+                msg = f"超过 {budget} 秒无响应"
                 attempts.append(f"{provider.name}: {msg}")
                 log.warning("%s 的 %s %s，降级尝试下一个", provider.name, capability, msg)
                 continue
             except (ProviderUnavailable, CapabilityNotSupported) as exc:
-                attempts.append(f"{provider.name}: {exc}")
+                attempts.append(f"{provider.name}: {short_error(exc)}")
                 log.info("%s 的 %s 不可用，降级尝试下一个：%s", provider.name, capability, exc)
                 continue
             except Exception as exc:
-                attempts.append(f"{provider.name}: {type(exc).__name__}: {exc}")
+                attempts.append(f"{provider.name}: {type(exc).__name__}: {short_error(exc)}")
                 log.warning("%s 的 %s 抛出未预期异常：%s", provider.name, capability, exc)
                 continue
 
@@ -148,9 +187,14 @@ class ProviderRegistry:
 
     # ---------------- 对上层的统一接口 ----------------
 
-    async def search(self, keyword: str, limit: int = 20) -> list[StockBasic]:
+    async def search(
+        self, keyword: str, limit: int = 20, attempt_timeout: float | None = None
+    ) -> list[StockBasic]:
         return await self._dispatch(
-            CAP_SEARCH, lambda p: p.search(keyword, limit), allow_empty=True
+            CAP_SEARCH,
+            lambda p: p.search(keyword, limit),
+            allow_empty=True,
+            attempt_timeout=attempt_timeout,
         )
 
     async def stock_basic(self, symbol: Symbol) -> StockBasic:

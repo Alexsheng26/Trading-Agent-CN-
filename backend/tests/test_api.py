@@ -282,3 +282,41 @@ def test_run_history_and_delete(client) -> None:  # type: ignore[no-untyped-def]
 
 def test_missing_run_returns_404(client) -> None:  # type: ignore[no-untyped-def]
     assert client.get("/api/v1/analysis/runs/nope").status_code == 404
+
+
+def test_quotes_batch_reports_total_failure(client, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """所有票都取不到时要报 503，不能返回 200 + 空数组。
+
+    返回空数组的话前端会以为"取数成功、只是没有数据"，画出一排"—"还附上
+    "行情更新于 22:04" —— 那比直接报错更误导人。
+    """
+    from app.core.errors import DataNotFound
+    from app.data.registry import get_registry
+
+    registry = get_registry()
+
+    async def boom(_sym):  # type: ignore[no-untyped-def]
+        raise DataNotFound("数据源全挂了")
+
+    monkeypatch.setattr(registry, "quote", boom)
+    resp = client.get("/api/v1/market/quotes?symbols=600519,000001")
+    assert resp.status_code == 503
+    assert "数据源全挂了" in resp.json()["detail"]
+
+
+def test_quotes_batch_keeps_partial_success(client, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """一只坏票不该拖垮整个列表 —— 有一只成功就返回 200。"""
+    from app.core.errors import DataNotFound
+    from app.data.registry import get_registry
+
+    registry = get_registry()
+    real = registry.quote
+
+    async def flaky(sym):  # type: ignore[no-untyped-def]
+        if sym.code == "000001":
+            raise DataNotFound("这只停牌了")
+        return await real(sym)
+
+    monkeypatch.setattr(registry, "quote", flaky)
+    body = client.get("/api/v1/market/quotes?symbols=600519,000001").json()
+    assert [q["symbol"] for q in body] == ["600519.SH"]

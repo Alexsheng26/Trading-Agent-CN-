@@ -26,6 +26,10 @@ requires_akshare = pytest.mark.skipif(
 #: 函数名 -> 我们实际传入的关键字参数
 CALLS: dict[str, tuple[str, ...]] = {
     "stock_zh_a_spot_em": (),
+    # 单只行情：quote() 现在走这个，不再走全市场快照
+    "stock_bid_ask_em": ("symbol",),
+    # 市盈率/市净率（盘口接口不给估值）
+    "stock_value_em": ("symbol",),
     "stock_individual_info_em": ("symbol",),
     "stock_zh_a_hist": ("symbol", "period", "start_date", "end_date", "adjust"),
     "stock_financial_abstract": ("symbol",),

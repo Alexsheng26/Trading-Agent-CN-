@@ -73,12 +73,24 @@ export default function HomePage() {
       {/* 大盘 */}
       <div className="mb-2 flex items-center gap-2">
         <SessionBadge session={market.session} polling={market.polling} />
-        {live.updatedAt && (
+        {/* 只有真的拿到过行情才显示时间戳。
+            取数失败时还写一句"行情更新于 22:04"，比什么都不写更误导人。 */}
+        {live.updatedAt !== null && Object.keys(live.quotes).length > 0 && (
           <span className="tabular text-[10px] text-[var(--muted)]">
             行情更新于 {fmtClock(live.updatedAt)}
           </span>
         )}
       </div>
+
+      {/* 行情取不到时要说清原因。一排"—"却不给理由，用户只会以为工具坏了 */}
+      {live.error && items.length > 0 && (
+        <div className="mb-3 rounded-lg bg-[var(--warn-soft)] px-3 py-2 text-[11px] leading-relaxed text-[var(--warn)]">
+          <strong>行情取不到</strong>：{live.error}
+          <br />
+          价格列显示为「—」是因为没拿到真实数据 —— 本工具不会用模拟数字填充。
+          去「设置 → 数据源诊断」看是哪一步失败。
+        </div>
+      )}
 
       {indexes.length > 0 && (
         <div className="no-scrollbar -mx-4 mb-4 flex gap-2 overflow-x-auto px-4 md:mx-0 md:px-0">

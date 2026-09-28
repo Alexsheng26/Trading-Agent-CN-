@@ -269,6 +269,29 @@ docker compose ps
 - `backend` 状态一直是 `starting` → 等 30 秒，它在建数据库表
 - 都 `Up` 但打不开 → 试试 <http://127.0.0.1:3000>
 
+### ⚠️ 升级到 v8 后必须改一下 `.env`
+
+早期版本的 `.env.example` 里写的是：
+
+```
+DATA_PROVIDER_ORDER=akshare,tushare,mock
+```
+
+**请把末尾的 `mock` 删掉**，改成：
+
+```
+DATA_PROVIDER_ORDER=akshare,tushare
+```
+
+然后 `docker compose restart backend`。
+
+为什么：`mock` 是程序生成的**假行情**。真实数据源取不到时会自动降级到它，
+于是界面上会出现"模拟股份741 / 299.42"这种东西，AI 还会基于这个假价格
+给出一整套止盈止损点位，看起来和真的一模一样 —— 在一个输出买卖点位的工具里
+这非常危险。删掉之后，取不到真数据就会明确报错并说出原因，绝不编数字。
+
+（新装的用户不用管这条，新的 `.env.example` 里已经不含 mock。）
+
 ### 搜索不出结果 / 价格明显是假的 —— 先跑数据源诊断
 打开 **设置页**，用两个自助工具，不用翻日志：
 
@@ -284,7 +307,9 @@ docker compose ps
 | --- | --- |
 | 只有 `mock` 一个源 | 界面上的价格全是程序生成的假数据。在 `.env` 里设 `DATA_PROVIDER_ORDER=akshare,tushare` 后重启 |
 | akshare 各接口 `失败`，原因带 403 / timeout / ConnectionError | 上不去东方财富的接口。检查代理软件、公司网络、防火墙；或直接换 Tushare（见下） |
-| akshare `超时` | 对方限流或改版。AKShare 是抓网页的，这种情况会反复出现 —— 建议换 Tushare |
+| akshare 只有「搜索」`超时`，其余正常 | **这是正常的**。全市场列表接口天生要 60-90 秒（要翻 54 页、每页还 sleep 1 秒），诊断给它的预算只有 12 秒。按名称搜索不靠它实时取数，靠后台建好的本地代码目录 —— 看「股票代码目录」那一栏显示多少只股票即可 |
+| akshare「实时行情」`失败` | 这个是单只股票的盘口接口（单请求、很快），它失败就是真的连不上 push2.eastmoney.com |
+| akshare `超时`（除搜索以外的接口） | 对方限流或改版。AKShare 是抓网页的，这种情况会反复出现 —— 建议换 Tushare |
 | 全部 `正常` | 数据是真的，界面上顶部那条"模拟数据"警告条也应该消失了 |
 
 **换 Tushare 更省心**：它是正式 API 而不是抓网页，稳定得多。去 <https://tushare.pro>

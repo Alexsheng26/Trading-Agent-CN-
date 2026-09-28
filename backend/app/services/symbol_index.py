@@ -156,7 +156,11 @@ async def refresh() -> int:
 
     只增不删：一次拉漏了不该把已有的好数据删掉。
     """
-    items = await get_registry().search("", _FETCH_LIMIT)
+    # 全市场列表天生很慢（AKShare 要翻 54 页、每页 sleep 1 秒，60-90 秒），
+    # 这里是后台任务，给足预算。默认的 12 秒会让它永远失败。
+    items = await get_registry().search(
+        "", _FETCH_LIMIT, attempt_timeout=get_settings().symbol_index_timeout
+    )
     source = get_registry().last_sources.get("search", "") or ""
     if not items:
         log.warning("代码目录刷新：数据源返回空列表，目录保持不变")
