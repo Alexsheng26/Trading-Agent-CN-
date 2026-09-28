@@ -1,12 +1,21 @@
 // Service Worker —— 让应用能装到手机主屏，并在弱网/断网时不至于白屏。
 //
 // 缓存策略（刻意保守，金融数据不能给用户看旧的）：
-//   - 应用外壳（HTML/JS/CSS/图标）：stale-while-revalidate，秒开
+//   - **页面导航：网络优先**，取不到才用缓存兜底。
+//     这一条很重要：如果 HTML 也走"先给缓存"，升级之后第一次打开拿到的是
+//     旧 HTML，而旧 HTML 里引用的是旧的带哈希的 JS 文件名 —— 重新构建后
+//     那些文件已经不存在了，于是要么看到旧界面，要么直接 404 白屏。
+//     换成网络优先之后，只要能联网，打开就一定是新版本。
+//   - /_next/static/**：缓存优先。文件名带内容哈希，内容永不改变，
+//     可以放心长期缓存，这也是秒开的来源。
+//   - 其余静态资源（图标、manifest）：stale-while-revalidate
 //   - /api/** 一律不缓存：行情和分析结果必须是实时的，
 //     宁可报错也不能拿昨天的价格糊弄用户
 //   - 完全离线时，导航请求回落到离线提示页
+//
+// 改了缓存策略就要把 VERSION 往上加，activate 里会把旧缓存整个删掉。
 
-const VERSION = "v1";
+const VERSION = "v2";
 const SHELL_CACHE = `shell-${VERSION}`;
 
 const SHELL_ASSETS = [
@@ -53,37 +62,48 @@ self.addEventListener("fetch", (event) => {
   // SSE 也不能碰
   if (request.headers.get("accept")?.includes("text/event-stream")) return;
 
+  // 带内容哈希的构建产物：内容不可能变，缓存优先
+  const immutable = url.pathname.startsWith("/_next/static/");
+  // 页面导航：网络优先，保证升级后打开就是新版本
+  const navigation = request.mode === "navigate";
+
   event.respondWith(
     (async () => {
       const cache = await caches.open(SHELL_CACHE);
-      const cached = await cache.match(request, { ignoreSearch: request.mode === "navigate" });
 
-      const network = fetch(request)
-        .then((response) => {
+      const fromNetwork = async () => {
+        try {
+          const response = await fetch(request);
           if (response.ok && response.type === "basic") {
             void cache.put(request, response.clone());
           }
           return response;
-        })
-        .catch(() => null);
+        } catch {
+          return null;
+        }
+      };
 
-      // 有缓存先给缓存（秒开），后台顺便更新
-      if (cached) {
-        void network;
-        return cached;
-      }
-
-      const fresh = await network;
-      if (fresh) return fresh;
-
-      // 彻底离线且没缓存
-      if (request.mode === "navigate") {
+      if (navigation) {
+        const fresh = await fromNetwork();
+        if (fresh) return fresh;
+        // 断网：用缓存的外壳，实在没有就给离线页
+        const cached = await cache.match(request, { ignoreSearch: true });
+        if (cached) return cached;
         return new Response(OFFLINE_HTML, {
           status: 503,
           headers: { "Content-Type": "text/html; charset=utf-8" },
         });
       }
-      return new Response("", { status: 504 });
+
+      const cached = await cache.match(request);
+      if (cached) {
+        // 不可变资源没有"更新"一说，不必回源；其余的后台顺便刷一下
+        if (!immutable) void fromNetwork();
+        return cached;
+      }
+
+      const fresh = await fromNetwork();
+      return fresh ?? new Response("", { status: 504 });
     })(),
   );
 });
