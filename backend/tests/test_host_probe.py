@@ -92,3 +92,57 @@ async def test_probe_returns_one_result_per_host() -> None:
         assert r.host and r.used_by and r.verdict
         assert r.plain in ("正常", "失败", "未测")
         assert r.browser in ("正常", "失败", "未测")
+
+
+# ---------------------------------------------------------------- 依赖缺失时
+
+
+@pytest.mark.parametrize(
+    ("plain", "browser", "expected"),
+    [
+        ("未测", "未测", "无法探测"),
+        ("未测", "正常", "可达"),
+        ("未测", "失败", "不可达"),
+    ],
+)
+def test_verdict_handles_missing_clients(plain: str, browser: str, expected: str) -> None:
+    """requests 不是本项目的运行时依赖（随 akshare 一起装）。
+
+    只装了 tushare 的用户那里 `import requests` 会失败 ——
+    产物环境的测试真的因此报过 ModuleNotFoundError，
+    诊断接口当时会直接 500，而那是用户排查时唯一的工具。
+    """
+    assert _verdict(plain, browser).startswith(expected)
+
+
+def test_plain_probe_reports_missing_requests(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """requests 没装时要报"未测"，不能抛异常。"""
+    import builtins
+
+    from app.services.host_probe import _try_plain
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if name == "requests":
+            raise ImportError("装作没装 requests")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    status, detail = _try_plain("https://example.invalid/")
+    assert status == "未测"
+    assert "requests" in detail
+
+
+def test_diagnose_survives_probe_failure(client, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """主机探测自己挂了，诊断接口也必须照常返回逐接口结果。"""
+    import app.services.host_probe as hp
+
+    async def boom(_impersonate):  # type: ignore[no-untyped-def]
+        raise RuntimeError("探测炸了")
+
+    monkeypatch.setattr(hp, "probe_hosts", boom)
+    body = client.get("/api/v1/market/diagnose").json()
+    assert body["providers"], "逐接口结果不能因为主机探测失败而丢掉"
+    assert body["hosts"] == []
+    assert "探测本身失败" in body["host_summary"]

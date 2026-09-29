@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import asdict
 from datetime import date, timedelta
 
@@ -17,6 +18,8 @@ from app.services import symbol_index
 from app.services.indicators import compute_snapshot
 from app.services.market_data import MarketDataService
 from app.services.market_session import session_state
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/market", tags=["行情"])
 
@@ -346,7 +349,15 @@ async def diagnose() -> dict:
     settings = get_settings()
     # 主机可达性：分清"连不上这个域名"和"客户端被按指纹拒绝"这两种情况。
     # 只看接口报错是分不清的，而两者的处理方式完全不同。
-    hosts = await probe_hosts(settings.akshare_impersonate)
+    # 探测本身出问题不能让整个诊断挂掉 —— 这是用户排查时唯一的工具。
+    try:
+        hosts = await probe_hosts(settings.akshare_impersonate)
+        host_results = [asdict(r) for r in hosts.results]
+        host_summary = hosts.summary
+    except Exception as exc:  # pragma: no cover —— 防御性
+        log.warning("主机可达性探测失败：%s", exc)
+        host_results = []
+        host_summary = f"主机探测本身失败了：{short_error(exc)}"
 
     return {
         "checked_at": session_state().as_of.isoformat(),
@@ -360,6 +371,6 @@ async def diagnose() -> dict:
         # 尝试顺序：前面的源失败才会降级到后面，排查时这个顺序很关键
         "order": [p.name for p in registry._providers],  # noqa: SLF001 —— 诊断用途
         "providers": out,
-        "hosts": [asdict(r) for r in hosts.results],
-        "host_summary": hosts.summary,
+        "hosts": host_results,
+        "host_summary": host_summary,
     }

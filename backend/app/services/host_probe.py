@@ -64,8 +64,12 @@ class ProbeReport:
 
 
 def _try_plain(url: str) -> tuple[str, str]:
-    import requests  # noqa: PLC0415
-
+    # requests 不是本项目的运行时依赖（它是随 akshare 一起装的），
+    # 只装了 tushare 的用户这里会 ImportError —— 不能让它把诊断整个打挂。
+    try:
+        import requests  # noqa: PLC0415
+    except ImportError:
+        return "未测", "未安装 requests（随 akshare 一起装）"
     try:
         r = requests.get(url, timeout=_TIMEOUT)
         return "正常", f"HTTP {r.status_code}"
@@ -92,7 +96,17 @@ def _brief(exc: object) -> str:
     return f"{type(exc).__name__}: {short_error(exc)}"[:140]
 
 
+def _verdict_when_untested(plain: str, browser: str) -> bool:
+    return plain == "未测" and browser == "未测"
+
+
 def _verdict(plain: str, browser: str) -> str:
+    if _verdict_when_untested(plain, browser):
+        return "无法探测（两种 HTTP 客户端都没装）"
+    if plain == "未测" and browser == "正常":
+        return "可达"
+    if plain == "未测" and browser == "失败":
+        return "不可达（本机网络问题）"
     if plain == "正常" and browser in ("正常", "未测"):
         return "可达"
     if plain == "失败" and browser == "正常":
