@@ -217,3 +217,54 @@ def test_short_error_collapses_newlines() -> None:
     from app.data.registry import short_error
 
     assert short_error(Exception("第一行\n  第二行\t第三行")) == "第一行 第二行 第三行"
+
+
+# ---------------------------------------------------------------- 报错里不能带凭证
+
+
+def test_short_error_redacts_tushare_style_token() -> None:
+    """数据源报错会直接显示在界面上，上游有时把 token 原样回显。
+
+    Tushare 的 token 是 40-64 位十六进制，必须擦掉。
+    """
+    from app.data.registry import short_error
+
+    fake = "a1b2c3d4e5f6" * 5  # 60 位十六进制，形状和真 token 一致
+    out = short_error(Exception(f"tushare 调用失败：token {fake} 无效"))
+    assert fake not in out
+    assert "***" in out
+    assert "tushare 调用失败" in out, "该保留的信息不能一起擦掉"
+
+
+def test_short_error_redacts_token_in_query_string() -> None:
+    from app.data.registry import short_error
+
+    fake = "f" * 48
+    out = short_error(Exception(f"https://api.tushare.pro/?token={fake}&api=daily"))
+    assert fake not in out
+    assert "token=***" in out
+    assert "api.tushare.pro" in out, "域名要留着，那是排查线索"
+
+
+def test_short_error_redacts_sk_style_keys() -> None:
+    from app.data.registry import short_error
+
+    for key in ("sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWx", "sk-abcdefghijklmnopqrstuvwx"):
+        out = short_error(Exception(f"鉴权失败: {key}"))
+        assert key not in out
+        assert "***" in out
+
+
+def test_short_error_leaves_normal_messages_alone() -> None:
+    """别擦过头 —— 正常报错要原样保留，否则排查线索就没了。"""
+    from app.data.registry import short_error
+
+    msg = "连不上 push2.eastmoney.com（ConnectionError）"
+    assert short_error(Exception(msg)) == msg
+
+
+def test_redact_keeps_short_hex_like_words() -> None:
+    """短的十六进制串（比如颜色值、commit 前缀）不该被当成密钥。"""
+    from app.data.registry import redact_secrets
+
+    assert redact_secrets("背景色 #1a2b3c，提交 a1b2c3d") == "背景色 #1a2b3c，提交 a1b2c3d"

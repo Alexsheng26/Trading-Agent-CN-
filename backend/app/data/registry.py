@@ -50,6 +50,33 @@ T = TypeVar("T")
 _ERROR_MAX_CHARS = 180
 
 
+#: 看起来像密钥的片段。数据源报错里可能把 token 原样带出来，
+#: 而这些报错现在会直接显示在界面上 —— 必须先擦掉。
+_SECRET_PATTERNS = (
+    # Tushare 那种 40-64 位十六进制
+    re.compile(r"\b[0-9a-fA-F]{32,}\b"),
+    # sk-... 形式（Anthropic / OpenAI / DeepSeek）
+    re.compile(r"\bsk-[A-Za-z0-9_\-]{16,}"),
+    # URL 查询参数里的 token/key/apikey
+    re.compile(r"(?i)\b(token|api_?key|secret)=[^&\s\'\"]+"),
+)
+
+
+def redact_secrets(text: str) -> str:
+    """擦掉文本里像密钥的片段。
+
+    数据源的报错会被显示在界面上（自 v11 起取不到数据就明确报错），
+    而上游有时会把凭证原样回显在错误信息里。
+    宁可多擦几个十六进制串，也不能让 token 出现在屏幕上。
+    """
+    for pattern in _SECRET_PATTERNS:
+        if pattern.pattern.endswith(r"=[^&\s\'\"]+"):
+            text = pattern.sub(lambda m: m.group(0).split("=", 1)[0] + "=***", text)
+        else:
+            text = pattern.sub("***", text)
+    return text
+
+
 def short_error(exc: object) -> str:
     """把数据源的原始异常压成一句人能读的话。
 
@@ -57,8 +84,11 @@ def short_error(exc: object) -> str:
     （`fields=f120%2Cf121%2C...` 那种），原样透给前端就是一屏乱码，
     真正有用的只有"连不上 push2.eastmoney.com"这一句。
     完整信息仍然写日志，不丢。
+
+    同时擦掉像密钥的片段 —— 这些报错会直接显示在界面上。
     """
     text = re.sub(r"\s+", " ", str(exc)).strip()
+    text = redact_secrets(text)
     # 砍掉长查询串，只留问号
     text = re.sub(r"\?[^\s)\'\"]{40,}", "?…", text)
     if len(text) > _ERROR_MAX_CHARS:
