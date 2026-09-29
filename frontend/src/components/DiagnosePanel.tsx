@@ -184,6 +184,16 @@ function Advice({ result }: { result: Diagnosis }) {
         <br />
         <br />
         关掉之后取不到数就会明确报错（而不是给你假数字），接着按下面的失败原因处理。
+        {disconnected && (
+          <>
+            <br />
+            <br />
+            顺带说一下真源为什么不通：失败原因里是「对方直接掐断连接」
+            （RemoteDisconnected / Connection aborted），<strong>不是超时</strong> ——
+            服务端在 TLS 握手层面拒绝了普通 Python 客户端。本项目已默认启用
+            浏览器指纹伪装（<code>AKSHARE_BROWSER_TRANSPORT=true</code>）绕过它。
+          </>
+        )}
       </Tip>
     );
   }
