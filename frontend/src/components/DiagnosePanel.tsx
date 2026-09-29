@@ -60,7 +60,7 @@ export function DiagnosePanel() {
       </button>
       {running && (
         <p className="mt-2 text-[11px] text-[var(--muted)]">
-          会真的发网络请求，单个接口最多等 12 秒。请不要关闭页面。
+          会真的发网络请求：先并发探测各主机可达性，再逐个调用接口（单个最多 12 秒）。请不要关闭页面。
         </p>
       )}
 
@@ -72,10 +72,37 @@ export function DiagnosePanel() {
 
       {result && !running && (
         <div className="mt-4 space-y-3">
-          <p className="text-[11px] text-[var(--muted)]">
-            尝试顺序：{result.order.join(" → ")} · 探测于{" "}
-            {result.checked_at.slice(11, 19)}
-          </p>
+          <div className="space-y-1 text-[11px] text-[var(--muted)]">
+            <p>
+              尝试顺序：{result.order.join(" → ")} · 探测于{" "}
+              {result.checked_at.slice(11, 19)}
+            </p>
+            {/* 版本和指纹状态摆在最显眼处：排查时第一件要确认的就是
+                "跑的是哪一版、指纹到底有没有生效" */}
+            <p>
+              后端版本 <strong className="text-[var(--text)]">{result.app_version ?? "未知"}</strong>
+              {result.transport && (
+                <>
+                  {" · 浏览器指纹 "}
+                  <strong
+                    className={
+                      result.transport.active
+                        ? "text-[var(--down)]"
+                        : "text-[var(--warn)]"
+                    }
+                  >
+                    {result.transport.active
+                      ? `已生效（${result.transport.impersonate}）`
+                      : result.transport.browser_impersonation
+                        ? "配置开启但未生效"
+                        : "已关闭"}
+                  </strong>
+                </>
+              )}
+            </p>
+          </div>
+
+          {result.hosts && result.hosts.length > 0 && <HostTable result={result} />}
 
           {result.providers.map((p) => (
             <div key={p.provider} className="rounded-lg border border-[var(--border)]">
@@ -127,6 +154,56 @@ export function DiagnosePanel() {
   );
 }
 
+/** 主机可达性。两种客户端各打一次，才能分清"连不上"和"被按指纹拒绝"。 */
+function HostTable({ result }: { result: Diagnosis }) {
+  const hosts = result.hosts ?? [];
+  return (
+    <div className="rounded-lg border border-[var(--border)]">
+      <div className="border-b border-[var(--border)] px-3 py-2">
+        <span className="text-sm font-medium">主机可达性</span>
+        <p className="mt-1 text-[10px] leading-relaxed text-[var(--muted)]">
+          每个主机用普通 requests 和浏览器指纹各打一次。两个都失败 = 这台机器
+          连不上该域名；只有普通 requests 失败 = 被按客户端指纹拦了。
+        </p>
+      </div>
+      <ul className="divide-y divide-[var(--border)]">
+        {hosts.map((h) => (
+          <li key={h.host} className="px-3 py-2">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="min-w-0 truncate text-xs">
+                {h.host}
+                <span className="ml-2 text-[10px] text-[var(--muted)]">{h.used_by}</span>
+              </span>
+              <span
+                className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${
+                  h.verdict === "可达"
+                    ? "bg-[var(--down-soft)] text-[var(--down)]"
+                    : h.verdict.startsWith("指纹")
+                      ? "bg-[var(--warn-soft)] text-[var(--warn)]"
+                      : "bg-[var(--up-soft)] text-[var(--up)]"
+                }`}
+              >
+                {h.verdict}
+              </span>
+            </div>
+            <p className="tabular mt-1 text-[10px] text-[var(--muted)]">
+              普通 {h.plain}
+              {h.plain !== "正常" && h.plain_detail ? `（${h.plain_detail}）` : ""} · 指纹{" "}
+              {h.browser}
+              {h.browser !== "正常" && h.browser_detail ? `（${h.browser_detail}）` : ""}
+            </p>
+          </li>
+        ))}
+      </ul>
+      {result.host_summary && (
+        <p className="border-t border-[var(--border)] px-3 py-2 text-[11px] leading-relaxed text-[var(--text)]">
+          {result.host_summary}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** 把探测结果翻译成"接下来该做什么"。报一堆状态而不给下一步等于没说。 */
 function Advice({ result }: { result: Diagnosis }) {
   const real = result.providers.filter((p) => p.provider !== "mock");
@@ -142,8 +219,12 @@ function Advice({ result }: { result: Diagnosis }) {
       if (i.status === "正常") realOk.add(i.name);
     }
   }
-  const CORE = ["实时行情", "日线", "搜索"];
+  // 只有行情和 K 线是真正的核心：缺了界面就没数据。
+  // 搜索不算 —— 按名称搜索走的是本地代码目录，全市场列表接口天生要一分多钟，
+  // 它超时是预期行为，把它算进"核心缺失"会让用户去追一个不存在的问题。
+  const CORE = ["实时行情", "日线"];
   const missingCore = CORE.filter((name) => !realOk.has(name));
+  const searchDown = !realOk.has("搜索");
 
   // 连接被对方直接掐断（而不是超时）是 TLS 指纹拦截的典型特征
   const disconnected = real.some((p) =>
@@ -232,9 +313,19 @@ function Advice({ result }: { result: Diagnosis }) {
   if (broken.length > 0) {
     return (
       <Tip tone="ok">
-        核心行情（实时行情、日线、搜索）都能从真实数据源取到。
+        <strong>行情和 K 线都能从真实数据源取到</strong>，数据是真的。
         {broken.map((p) => p.provider).join("、")} 有个别接口失败，
         系统会逐接口降级到其他源，不影响使用。
+        {searchDown && (
+          <>
+            <br />
+            <br />
+            其中「搜索」超时/失败是<strong>预期行为</strong>：全市场列表接口要翻
+            50 多页、每页还要等 1 秒，本身就需要一分多钟，诊断只给它 12 秒。
+            按名称搜索并不实时调它 —— 走的是上面「股票代码目录」那份本地表，
+            只要那里显示了股票数量就是可用的。
+          </>
+        )}
       </Tip>
     );
   }

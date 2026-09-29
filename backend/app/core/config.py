@@ -34,8 +34,12 @@ class Settings(BaseSettings):
     # 超时，于是每次静默降级到 mock，用户看到"华宝股份 299.42"还拿到了
     # 一整套止盈止损）。取不到真数据就该报错，不该编一个。
     # 要离线演示时显式写 DATA_PROVIDER_ORDER=mock。
+    # 顺序是按"主机多样性"排的：东方财富（字段最全）-> 雪球 -> 新浪 -> Tushare。
+    # 中间两个和东方财富**没有任何共用主机**，所以当 push2.eastmoney.com 这类
+    # 主机在某些网络下不可达时（代理软件、企业网络、个别运营商线路），
+    # 行情和 K 线还能自动降级过去，而不是整体没数据。
     data_provider_order: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: ["akshare", "tushare"]
+        default_factory=lambda: ["akshare", "xueqiu", "sina", "tushare"]
     )
     tushare_token: str = ""
     quote_cache_ttl: int = 60

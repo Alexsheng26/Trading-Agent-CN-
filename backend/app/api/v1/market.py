@@ -8,6 +8,7 @@ from datetime import date, timedelta
 
 from fastapi import APIRouter, HTTPException, Query
 
+from app.core.config import get_settings
 from app.core.errors import DataNotFound, SymbolError
 from app.data.registry import get_registry, short_error
 from app.data.symbols import normalize, try_normalize
@@ -338,9 +339,27 @@ async def diagnose() -> dict:
                 )
         out.append(entry)
 
+    from app.core.version import APP_VERSION  # noqa: PLC0415
+    from app.data.browser_transport import is_enabled  # noqa: PLC0415
+    from app.services.host_probe import probe_hosts  # noqa: PLC0415
+
+    settings = get_settings()
+    # 主机可达性：分清"连不上这个域名"和"客户端被按指纹拒绝"这两种情况。
+    # 只看接口报错是分不清的，而两者的处理方式完全不同。
+    hosts = await probe_hosts(settings.akshare_impersonate)
+
     return {
         "checked_at": session_state().as_of.isoformat(),
+        # 版本写进结果里：用户截图一发过来就知道跑的是哪一版，不用反推
+        "app_version": APP_VERSION,
+        "transport": {
+            "browser_impersonation": settings.akshare_browser_transport,
+            "impersonate": settings.akshare_impersonate,
+            "active": is_enabled(),
+        },
         # 尝试顺序：前面的源失败才会降级到后面，排查时这个顺序很关键
         "order": [p.name for p in registry._providers],  # noqa: SLF001 —— 诊断用途
         "providers": out,
+        "hosts": [asdict(r) for r in hosts.results],
+        "host_summary": hosts.summary,
     }

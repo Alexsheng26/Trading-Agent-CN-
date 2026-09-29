@@ -18,6 +18,7 @@ from typing import Any, TypeVar
 from app.core.config import Settings, get_settings
 from app.core.errors import CapabilityNotSupported, DataNotFound, ProviderUnavailable
 from app.data.akshare_provider import AkshareProvider
+from app.data.backup_providers import SinaProvider, XueqiuProvider
 from app.data.base import (
     CAP_BARS,
     CAP_BASIC,
@@ -71,6 +72,10 @@ def build_provider(name: str, settings: Settings) -> DataProvider | None:
             return AkshareProvider()
         case "tushare":
             return TushareProvider(settings.tushare_token)
+        case "xueqiu":
+            return XueqiuProvider()
+        case "sina":
+            return SinaProvider()
         case "mock":
             return MockProvider()
         case _:

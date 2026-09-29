@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.core.config import get_settings
+from app.core.version import APP_VERSION
 from app.data.base import ALL_CAPABILITIES
 from app.data.registry import get_registry
 from app.schemas.market import ProviderStatusOut
@@ -43,6 +44,10 @@ async def status() -> dict:
 
     return {
         "app_env": settings.app_env,
+        # 版本与运输层状态：排查时第一件要确认的事就是"跑的是哪一版、
+        # 浏览器指纹到底有没有生效"。不显示出来只能靠猜。
+        "app_version": APP_VERSION,
+        "transport": _transport_status(settings),
         "active_sources": active,
         # 前端据此给出醒目警示：模拟数据是程序生成的假数字，
         # 在金融工具里被误当成真实行情后果很严重。
@@ -76,3 +81,15 @@ def _capabilities_of(registry, name: str) -> frozenset[str]:  # type: ignore[no-
         if provider.name == name:
             return provider.capabilities
     return frozenset()
+
+
+def _transport_status(settings) -> dict:  # type: ignore[no-untyped-def]
+    """akshare 的 HTTP 运输层现在是什么状态。"""
+    from app.data.browser_transport import is_enabled  # noqa: PLC0415
+
+    return {
+        "browser_impersonation": settings.akshare_browser_transport,
+        "impersonate": settings.akshare_impersonate,
+        # 配置开着不代表真的打上了补丁（akshare 没装就不会）
+        "active": is_enabled(),
+    }

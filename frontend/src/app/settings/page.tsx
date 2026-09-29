@@ -38,7 +38,15 @@ export default function SettingsPage() {
 
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-4 md:px-6 md:py-6">
-      <h1 className="mb-4 text-lg font-semibold">设置与状态</h1>
+      <div className="mb-4 flex items-baseline gap-2">
+        <h1 className="text-lg font-semibold">设置与状态</h1>
+        {/* 版本号放在标题旁：排查时第一件要确认的就是跑的是哪一版 */}
+        {status.app_version && (
+          <span className="rounded bg-[var(--surface-2)] px-1.5 py-0.5 text-[10px] text-[var(--muted)]">
+            {status.app_version}
+          </span>
+        )}
+      </div>
 
       {status.llm.is_stub && (
         <div className="mb-4 rounded-xl bg-[var(--warn-soft)] p-4 text-sm text-[var(--warn)]">
@@ -75,6 +83,11 @@ DATA_PROVIDER_ORDER=akshare,tushare`}
         <p className="mt-2 px-1 text-[11px] leading-relaxed text-[var(--muted)]">
           按顺序尝试，前面的不可用时自动降级到后面。单个接口不支持也会逐项降级
           —— 比如 Tushare 没有个股新闻，新闻就会自动走 AKShare。
+          <br />
+          推荐 <code>akshare,xueqiu,sina,tushare</code>：这几个源
+          <strong className="text-[var(--text)]">主机互不相同</strong>，
+          东方财富在某些网络下不可达时（代理软件、公司网络），
+          行情和 K 线能自动落到雪球和新浪上。
         </p>
       </Section>
 

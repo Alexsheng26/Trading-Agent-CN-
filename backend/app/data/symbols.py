@@ -102,6 +102,16 @@ class Symbol:
         return f"{self.exchange.lower()}.{self.code}"
 
     @property
+    def xueqiu(self) -> str:
+        """雪球格式：`SH600519`。"""
+        return f"{self.exchange}{self.code}"
+
+    @property
+    def sina(self) -> str:
+        """新浪/腾讯格式：`sh600519`。"""
+        return f"{self.exchange.lower()}{self.code}"
+
+    @property
     def board(self) -> str:
         """所属板块中文名，用于给模型的上下文和前端展示。"""
         for prefix, name in _BOARD_NAMES:

@@ -137,7 +137,32 @@ export interface ProviderProbe {
   interfaces: InterfaceProbe[];
 }
 
+/** 单个主机的可达性。分清"连不上域名"和"客户端被按指纹拒绝" */
+export interface HostResult {
+  host: string;
+  used_by: string;
+  /** 普通 requests 的结果 */
+  plain: "正常" | "失败" | "未测";
+  plain_detail: string;
+  /** curl_cffi（浏览器指纹）的结果 */
+  browser: "正常" | "失败" | "未测";
+  browser_detail: string;
+  verdict: string;
+}
+
+export interface TransportStatus {
+  browser_impersonation: boolean;
+  impersonate: string;
+  /** 配置开着不等于真的生效（akshare 没装就不会） */
+  active: boolean;
+}
+
 export interface Diagnosis {
+  /** 后端版本号。排查时先确认跑的是哪一版 */
+  app_version?: string;
+  transport?: TransportStatus;
+  hosts?: HostResult[];
+  host_summary?: string;
   /** 探测时刻（北京时间） */
   checked_at: string;
   /** 数据源尝试顺序，前面的失败才降级到后面 */
@@ -224,6 +249,8 @@ export interface WatchlistItem {
 
 export interface SystemStatus {
   app_env: string;
+  app_version?: string;
+  transport?: TransportStatus;
   /** 各维度最近一次实际命中的数据源。healthcheck 只说明依赖装好了，这个才是地面真相 */
   active_sources?: Record<string, string>;
   /** 是否有任何维度落到了模拟数据上 */
