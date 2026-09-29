@@ -71,7 +71,25 @@ class AkshareProvider:
                     "DATA_PROVIDER_ORDER 中移除"
                 ) from exc
             self._ak = akshare
+            self._enable_browser_transport()
         return self._ak
+
+    @staticmethod
+    def _enable_browser_transport() -> None:
+        """把 akshare 的请求换成浏览器 TLS 指纹。
+
+        东方财富会按 TLS 握手特征拦掉普通 Python requests（表现是
+        "Remote end closed connection without response"）。
+        详细原因见 app/data/browser_transport.py 的模块注释。
+        """
+        from app.core.config import get_settings  # noqa: PLC0415 —— 避免循环导入
+        from app.data.browser_transport import enable  # noqa: PLC0415
+
+        settings = get_settings()
+        if not settings.akshare_browser_transport:
+            log.info("AKSHARE_BROWSER_TRANSPORT=false，akshare 使用普通 requests")
+            return
+        enable(settings.akshare_impersonate)
 
     async def _call(self, func_name: str, /, **kwargs: Any) -> Any:
         """在线程池里调 AKShare，避免阻塞事件循环。"""

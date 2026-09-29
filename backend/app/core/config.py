@@ -53,6 +53,14 @@ class Settings(BaseSettings):
     # 建目录时给数据源的超时（秒）。全市场列表本身就要 60-90 秒，
     # 不能用 PROVIDER_TIMEOUT 那个给交互接口准备的小数值。
     symbol_index_timeout: int = 240
+    # 让 akshare 的请求走浏览器 TLS 指纹（curl_cffi）。
+    # 东方财富会按 TLS 握手特征拦掉普通 Python requests：表现是
+    # "Remote end closed connection without response"，而 akshare 里唯一用
+    # curl_cffi 的个股新闻接口照样能通。开着它能绕过这类拦截。
+    # curl_cffi 本来就是 akshare 的依赖，不需要额外安装。
+    akshare_browser_transport: bool = True
+    # 模拟哪个浏览器，取值见 curl_cffi 文档（chrome / safari / edge ...）
+    akshare_impersonate: str = "chrome"
 
     # ---------- LLM ----------
     llm_provider: LLMProvider = "echo"

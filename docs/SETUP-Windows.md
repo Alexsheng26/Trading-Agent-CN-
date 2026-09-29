@@ -283,7 +283,13 @@ DATA_PROVIDER_ORDER=akshare,tushare,mock
 DATA_PROVIDER_ORDER=akshare,tushare
 ```
 
-然后 `docker compose restart backend`。
+然后 **`docker compose up -d`**。
+
+> ⚠️ **不要用 `docker compose restart`。** 它只是重启现有容器，
+> **不会重新读取 `.env`** —— 你改了文件但容器里的环境变量还是旧的，
+> 看起来什么都没发生。`up -d` 会检测到配置变化并重建容器。
+> 改完怎么确认生效：打开设置页点「开始探测」，最上面那行「尝试顺序」
+> 里不该再出现 mock。
 
 为什么：`mock` 是程序生成的**假行情**。真实数据源取不到时会自动降级到它，
 于是界面上会出现"模拟股份741 / 299.42"这种东西，AI 还会基于这个假价格
@@ -320,13 +326,42 @@ DATA_PROVIDER_ORDER=tushare,akshare,mock
 TUSHARE_TOKEN=你的token
 ```
 
-重启后端（`docker compose restart backend`），回设置页再跑一次诊断确认。
+然后 `docker compose up -d`（**不是 restart** —— restart 不重新读 `.env`），
+回设置页再跑一次诊断确认。
 
 > 顺带说明：Tushare 没有个股新闻接口，新闻那一项会自动落到 AKShare ——
 > 逐接口降级是设计好的，不影响其他维度。
 
 另一个更硬的判断方法：访问 <http://localhost:8000/api/v1/status> 看 `using_mock_data`，
 `true` 就说明至少有一个维度用的是假数据。
+
+### 诊断里只有「个股新闻」正常，其余全是「对方直接掐断连接」
+
+失败原因长这样：
+
+```
+('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+```
+
+**这不是超时，也不是没网。** 是对方在 TLS 握手层面拒绝了普通 Python 客户端：
+akshare 里唯一用 `curl_cffi`（会模拟真实 Chrome 的指纹）取数的接口就是个股新闻，
+其余都用普通 `requests` —— 一个能通、其余全挂，正好对应上。
+
+本项目现在默认开启浏览器指纹伪装（`AKSHARE_BROWSER_TRANSPORT=true`），
+只换运输层、不动 akshare 的字段解析。升级后重新探测即可。
+
+如果开着还是全部掐断，说明是**本机网络层面**的问题，按这个顺序查：
+
+1. 代理软件 / VPN：很多代理会拦或重置对 `push2.eastmoney.com` 的连接，
+   试试关掉再探测；
+2. 安全软件、公司网络、校园网的出口策略；
+3. 想单独验证到底是客户端还是网络的问题，跑这一条命令（两种客户端各打一次）：
+
+```powershell
+docker compose exec backend python -c "import requests; from curl_cffi import requests as c; u='https://push2.eastmoney.com/api/qt/stock/get'; p={'fltt':'2','invt':'2','fields':'f43,f58,f60','secid':'0.300741'}; [print(n, end=': ') or (lambda f: print(f()))(g) for n, g in [('普通requests', lambda: requests.get(u,params=p,timeout=10).text[:100]), ('curl_cffi', lambda: c.get(u,params=p,timeout=10,impersonate='chrome').text[:100])]]"
+```
+
+两个都失败 = 网络问题；只有普通 requests 失败 = 指纹拦截，开着伪装就行。
 
 ### 价格不自动刷新 / 一直显示"已收盘"
 这通常是**对的**：A股交易时间是周一至周五 09:15-09:25（集合竞价）、09:30-11:30、
