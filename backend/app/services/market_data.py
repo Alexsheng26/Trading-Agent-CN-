@@ -28,6 +28,7 @@ from app.data.base import (
 from app.data.cache import cache
 from app.data.registry import ProviderRegistry, get_registry
 from app.data.symbols import Symbol
+from app.services.quote_source import quote_with_fallback
 
 log = logging.getLogger(__name__)
 
@@ -95,7 +96,7 @@ class MarketDataService:
         return await cache.get_or_set(
             f"quote:{symbol.canonical}",
             self._settings.quote_cache_ttl,
-            lambda: self._registry.quote(symbol),
+            lambda: quote_with_fallback(self._registry, symbol),
         )
 
     async def _bars(self, symbol: Symbol, start: date, end: date) -> list[Bar]:

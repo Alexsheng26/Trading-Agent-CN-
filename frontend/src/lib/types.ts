@@ -30,6 +30,10 @@ export interface Quote {
   total_market_cap?: number | null;
   float_market_cap?: number | null;
   updated_at?: string | null;
+  /** false = 这是最近一根日线的收盘价，不是实时价。界面必须显著标注 */
+  is_realtime?: boolean;
+  /** 非实时时对应的交易日 */
+  quote_date?: string | null;
 }
 
 export interface Bar {

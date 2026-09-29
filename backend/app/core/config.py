@@ -65,6 +65,11 @@ class Settings(BaseSettings):
     akshare_browser_transport: bool = True
     # 模拟哪个浏览器，取值见 curl_cffi 文档（chrome / safari / edge ...）
     akshare_impersonate: str = "chrome"
+    # 雪球行情接口需要一个 xq_a_token（登录后的 cookie）。不填的话雪球源会
+    # 直接报 400016 要求登录 —— 那时候行情会自动降级到后面的源。
+    # 取法：浏览器打开 xueqiu.com，F12 -> 应用/Application -> Cookie，
+    # 复制 xq_a_token 的值。它会过期，失效后重新取一次即可。
+    xueqiu_token: str = ""
 
     # ---------- LLM ----------
     llm_provider: LLMProvider = "echo"

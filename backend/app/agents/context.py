@@ -101,10 +101,24 @@ class AnalysisContext:
         q = self.snapshot.quote
         if q is None:
             return "## 最新行情\n\n⚠️ 行情数据缺失，不要对当前价格做任何假设。"
+        # 非实时价必须在简报里说清楚。不说的话模型会拿一个上一交易日的收盘价
+        # 当现价去算入场区间和止损位，而且不会在结论里声明这个前提 ——
+        # 用户看到的就是一套基于过期价格却毫无提示的点位。
+        stale_warning = ""
+        if getattr(q, "is_realtime", True) is False:
+            when = q.quote_date.isoformat() if q.quote_date else "最近一个交易日"
+            stale_warning = (
+                f"\n⚠️ **以下价格不是实时价**，是 {when} 的收盘价"
+                "（实时行情接口当前不可用）。"
+                "涉及当前价位的判断（入场区间、止损、是否突破）必须据此降低置信度，"
+                "并在结论里明确声明这一前提。\n"
+            )
+
         lines = [
             "## 最新行情",
-            "",
-            f"- 最新价：{_num(q.price)}",
+            stale_warning,
+            f"- 最新价：{_num(q.price)}"
+            + ("（收盘价，非实时）" if getattr(q, "is_realtime", True) is False else ""),
             f"- 涨跌幅：{_num(q.change_pct)}%",
             f"- 今开/最高/最低：{_num(q.open)} / {_num(q.high)} / {_num(q.low)}",
             f"- 昨收：{_num(q.prev_close)}",

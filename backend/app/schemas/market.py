@@ -32,6 +32,9 @@ class QuoteOut(BaseModel):
     total_market_cap: float | None = None
     float_market_cap: float | None = None
     updated_at: datetime | None = None
+    #: False = 这是最近一根日线的收盘价，不是实时价。前端必须显著标注
+    is_realtime: bool = True
+    quote_date: date | None = None
 
 
 class BarOut(BaseModel):

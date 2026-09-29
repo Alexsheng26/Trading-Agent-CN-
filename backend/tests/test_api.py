@@ -289,19 +289,45 @@ def test_quotes_batch_reports_total_failure(client, monkeypatch) -> None:  # typ
 
     返回空数组的话前端会以为"取数成功、只是没有数据"，画出一排"—"还附上
     "行情更新于 22:04" —— 那比直接报错更误导人。
+
+    注意要把**实时行情和日线两条路**都打死：只打死实时的话会走日线兜底
+    （那是设计好的行为，见 services/quote_source.py）。
     """
     from app.core.errors import DataNotFound
     from app.data.registry import get_registry
 
     registry = get_registry()
 
-    async def boom(_sym):  # type: ignore[no-untyped-def]
+    async def boom(*_a, **_k):  # type: ignore[no-untyped-def]
         raise DataNotFound("数据源全挂了")
 
     monkeypatch.setattr(registry, "quote", boom)
+    monkeypatch.setattr(registry, "daily_bars", boom)
     resp = client.get("/api/v1/market/quotes?symbols=600519,000001")
     assert resp.status_code == 503
     assert "数据源全挂了" in resp.json()["detail"]
+
+
+def test_quotes_batch_falls_back_to_last_bar(client, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """实时接口挂了但日线还在时，要给出收盘价并标明不是实时的。
+
+    这正是用户遇到的组合：日线走新浪通着，所有实时接口都不通。
+    直接报错的话整个界面就没有价格，而收盘价是完全真实的数据。
+    """
+    from app.core.errors import DataNotFound
+    from app.data.registry import get_registry
+
+    registry = get_registry()
+
+    async def no_realtime(*_a, **_k):  # type: ignore[no-untyped-def]
+        raise DataNotFound("实时接口全挂")
+
+    monkeypatch.setattr(registry, "quote", no_realtime)
+    body = client.get("/api/v1/market/quotes?symbols=600519").json()
+    assert len(body) == 1
+    assert body[0]["price"] > 0
+    assert body[0]["is_realtime"] is False, "必须标明这不是实时价"
+    assert body[0]["quote_date"], "必须说明是哪一天的价"
 
 
 def test_quotes_batch_keeps_partial_success(client, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -317,6 +343,14 @@ def test_quotes_batch_keeps_partial_success(client, monkeypatch) -> None:  # typ
             raise DataNotFound("这只停牌了")
         return await real(sym)
 
+    async def no_bars(sym, *_a, **_k):  # type: ignore[no-untyped-def]
+        if sym.code == "000001":
+            raise DataNotFound("这只连日线也没有")
+        return await real_bars(sym, *_a, **_k)
+
+    real_bars = registry.daily_bars
     monkeypatch.setattr(registry, "quote", flaky)
+    # 也要挡掉日线，否则这只票会走兜底而不是被跳过
+    monkeypatch.setattr(registry, "daily_bars", no_bars)
     body = client.get("/api/v1/market/quotes?symbols=600519,000001").json()
     assert [q["symbol"] for q in body] == ["600519.SH"]

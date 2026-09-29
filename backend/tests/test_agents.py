@@ -199,3 +199,67 @@ def test_sanitize_handles_missing_fields(snapshot) -> None:  # type: ignore[no-u
     assert cleaned["action"] == "观望"
     assert cleaned["conviction"] == 0
     assert cleaned["position_pct"] == 0.0
+
+
+def test_brief_flags_non_realtime_quote() -> None:
+    """非实时价必须在简报里写明。
+
+    不写的话模型会拿上一交易日的收盘价当现价去算入场区间和止损，
+    而且不会在结论里声明这个前提 —— 用户看到的就是一套基于过期价格、
+    却毫无提示的点位。
+    """
+    from dataclasses import replace
+    from datetime import date
+
+    from app.agents.context import AnalysisContext
+    from app.data.base import Quote
+    from app.data.symbols import normalize
+    from app.services.indicators import compute_snapshot
+
+    stale = Quote(
+        symbol="600519.SH",
+        name="贵州茅台",
+        price=1430.0,
+        prev_close=1410.0,
+        is_realtime=False,
+        quote_date=date(2026, 9, 29),
+    )
+
+    import asyncio
+
+    from app.data.mock_provider import MockProvider
+    from app.data.registry import ProviderRegistry
+    from app.services.market_data import MarketDataService
+
+    sym = normalize("600519")
+    snap = asyncio.run(MarketDataService(ProviderRegistry([MockProvider()])).snapshot(sym))
+    snap = replace(snap, quote=stale)
+
+    ctx = AnalysisContext(
+        symbol=sym, snapshot=snap, indicators=compute_snapshot(snap.bars), horizon="波段"
+    )
+    brief = ctx.market_brief()
+
+    assert "不是实时价" in brief
+    assert "2026-09-29" in brief
+    assert "收盘价，非实时" in brief
+    assert "降低置信度" in brief
+
+
+def test_brief_does_not_warn_for_realtime_quote() -> None:
+    """实时价就别加警告，否则每次分析都在喊狼来了。"""
+    import asyncio
+
+    from app.agents.context import AnalysisContext
+    from app.data.mock_provider import MockProvider
+    from app.data.registry import ProviderRegistry
+    from app.data.symbols import normalize
+    from app.services.indicators import compute_snapshot
+    from app.services.market_data import MarketDataService
+
+    sym = normalize("600519")
+    snap = asyncio.run(MarketDataService(ProviderRegistry([MockProvider()])).snapshot(sym))
+    ctx = AnalysisContext(
+        symbol=sym, snapshot=snap, indicators=compute_snapshot(snap.bars), horizon="波段"
+    )
+    assert "不是实时价" not in ctx.market_brief()

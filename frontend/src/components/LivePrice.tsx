@@ -42,7 +42,14 @@ export function LivePrice({ symbol, fallbackName, live, children }: Props) {
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h1 className="text-lg font-semibold">{quote?.name || fallbackName || symbol}</h1>
         <span className="tabular text-sm text-[var(--muted)]">{symbol}</span>
-        <SessionBadge session={session} polling={polling} />
+        <SessionBadge session={session} polling={polling} stale={quote?.is_realtime === false} />
+        {/* 非实时价必须显著标注。盘中把上一个交易日的收盘价当现价展示
+            而不告知，比没有价格危险得多 —— 用户会照着它下单。 */}
+        {quote && quote.is_realtime === false && (
+          <span className="rounded bg-[var(--warn-soft)] px-1.5 py-0.5 text-[10px] text-[var(--warn)]">
+            收盘价{quote.quote_date ? ` · ${quote.quote_date.slice(5)}` : ""}（非实时）
+          </span>
+        )}
         {children}
       </div>
 
@@ -76,6 +83,12 @@ export function LivePrice({ symbol, fallbackName, live, children }: Props) {
       <div className="mt-2 flex items-center gap-2 text-[11px] text-[var(--muted)]">
         {error ? (
           <span className="text-[var(--warn)]">行情刷新失败：{error}</span>
+        ) : quote && quote.is_realtime === false ? (
+          <span>
+            实时行情接口当前不可用，显示的是
+            {quote.quote_date ? ` ${quote.quote_date} ` : "最近一个交易日"}
+            的收盘价。去「设置 → 数据源诊断」看哪一步失败。
+          </span>
         ) : updatedAt ? (
           <span className="tabular">
             {polling ? "自动刷新 · " : ""}
@@ -132,9 +145,12 @@ function Field({
 export function SessionBadge({
   session,
   polling,
+  stale = false,
 }: {
   session: SessionInfo | null;
   polling: boolean;
+  /** 手里的价格是不是"非实时"的兜底价 */
+  stale?: boolean;
 }) {
   // 倒计时每 30 秒走一次就够了（显示精度到分钟）
   const now = useTicker(30_000, session !== null && !session.is_live);
@@ -142,7 +158,13 @@ export function SessionBadge({
 
   const detail = (() => {
     if (session.is_live) {
-      return polling ? `${session.poll_interval ?? 5} 秒自动刷新` : "已暂停刷新";
+      if (!polling) return "已暂停刷新";
+      // 盘中却只有兜底的收盘价时，不能说"5 秒自动刷新" ——
+      // 那会让人以为看到的数字每 5 秒在更新，而它其实是一个不动的收盘价。
+      // 轮询确实在继续（等着实时接口恢复），所以说"重试中"才准确。
+      return stale
+        ? `每 ${session.poll_interval ?? 5} 秒重试实时接口`
+        : `${session.poll_interval ?? 5} 秒自动刷新`;
     }
     if (!session.next_change) return "";
     const ms = Date.parse(session.next_change) - now;

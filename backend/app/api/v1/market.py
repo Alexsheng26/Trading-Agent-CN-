@@ -18,6 +18,7 @@ from app.services import symbol_index
 from app.services.indicators import compute_snapshot
 from app.services.market_data import MarketDataService
 from app.services.market_session import session_state
+from app.services.quote_source import quote_with_fallback
 
 log = logging.getLogger(__name__)
 
@@ -127,7 +128,7 @@ async def symbols_refresh(
 async def quote(symbol: str) -> QuoteOut:
     sym = _symbol(symbol)
     try:
-        q = await get_registry().quote(sym)
+        q = await quote_with_fallback(get_registry(), sym)
     except DataNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return QuoteOut(**{k: v for k, v in asdict(q).items() if k != "volume"})
@@ -249,7 +250,7 @@ async def quotes(
 
     async def one(sym):  # type: ignore[no-untyped-def]
         try:
-            return await registry.quote(sym)
+            return await quote_with_fallback(registry, sym)
         except (DataNotFound, SymbolError) as exc:
             failures.append(str(exc))
             return None

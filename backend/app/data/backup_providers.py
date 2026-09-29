@@ -40,11 +40,13 @@ from app.data.base import (
     CAP_BARS,
     CAP_INDEXES,
     CAP_QUOTE,
+    CAP_SEARCH,
     Bar,
     IndexQuote,
     Quote,
+    StockBasic,
 )
-from app.data.symbols import Symbol
+from app.data.symbols import Symbol, try_normalize
 
 log = logging.getLogger(__name__)
 
@@ -109,7 +111,25 @@ class XueqiuProvider(_AkshareBacked):
     capabilities = frozenset({CAP_QUOTE})
 
     async def quote(self, symbol: Symbol) -> Quote:
-        df = await self._call("stock_individual_spot_xq", symbol=symbol.xueqiu)
+        from app.core.config import get_settings  # noqa: PLC0415 —— 避免循环导入
+
+        token = get_settings().xueqiu_token.strip()
+        kwargs: dict[str, Any] = {"symbol": symbol.xueqiu}
+        if token:
+            kwargs["token"] = token
+
+        try:
+            df = await self._call("stock_individual_spot_xq", **kwargs)
+        except ProviderUnavailable as exc:
+            # 雪球未登录时返回 400016。原样透出去用户看不懂该干什么，
+            # 这里补一句怎么配。
+            if not token and ("400016" in str(exc) or "token" in str(exc).lower()):
+                raise ProviderUnavailable(
+                    "雪球行情需要登录凭证：浏览器打开 xueqiu.com，F12 → 应用 → Cookie，"
+                    "复制 xq_a_token 的值，填到 .env 的 XUEQIU_TOKEN 后执行 "
+                    "docker compose up -d。不配也没关系，行情会自动降级到后面的数据源。"
+                ) from exc
+            raise
         if df is None or df.empty:
             raise ProviderUnavailable(f"雪球没有 {symbol.canonical} 的行情")
 
@@ -149,10 +169,10 @@ class XueqiuProvider(_AkshareBacked):
 
 
 class SinaProvider(_AkshareBacked):
-    """新浪的日线与大盘指数。主机是 finance.sina.com.cn，和东方财富无关。"""
+    """新浪的日线、大盘指数与全市场列表。主机是 *.sina.com.cn，和东方财富无关。"""
 
     name = "sina"
-    capabilities = frozenset({CAP_BARS, CAP_INDEXES})
+    capabilities = frozenset({CAP_BARS, CAP_INDEXES, CAP_SEARCH})
 
     #: 首页展示的指数。新浪用的代码前面带市场前缀
     _WANTED_INDEXES = {
@@ -162,6 +182,42 @@ class SinaProvider(_AkshareBacked):
         "sh000300": ("000300", "沪深300"),
         "sh000688": ("000688", "科创50"),
     }
+
+    async def search(self, keyword: str, limit: int = 20) -> list[StockBasic]:
+        """按代码或名称搜全市场。
+
+        ⚠️ **只适合后台建代码目录用。** 这个接口要翻 60 多页
+        （虽然页间不 sleep，仍需几十秒），而且 akshare 的文档明确写着
+        "大量采集会被新浪封禁 IP"。所以：
+        - 请求路径上的搜索走本地代码目录（services/symbol_index.py），不碰它；
+        - 目录一天建一次，正好是它合适的用法。
+        """
+        df = await self._call("stock_zh_a_spot")
+        if df is None or df.empty:
+            return []
+
+        keyword = keyword.strip()
+        out: list[StockBasic] = []
+        for _, row in df.iterrows():
+            # 新浪的代码带市场前缀（sh600519），try_normalize 能认
+            raw_code = str(row.get("代码") or "")
+            name = str(row.get("名称") or "")
+            if keyword and keyword not in raw_code and keyword not in name:
+                continue
+            sym = try_normalize(raw_code)
+            if sym is None:
+                continue
+            out.append(
+                StockBasic(
+                    symbol=sym.canonical,
+                    name=name,
+                    exchange=sym.exchange,
+                    board=sym.board,
+                )
+            )
+            if len(out) >= limit:
+                break
+        return out
 
     async def daily_bars(
         self, symbol: Symbol, start: date, end: date, adjust: str = "qfq"

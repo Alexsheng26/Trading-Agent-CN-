@@ -17,6 +17,7 @@ from app.db.models import WatchlistItem
 from app.db.session import get_session
 from app.schemas.market import QuoteOut
 from app.schemas.watchlist import WatchlistCreate, WatchlistItemOut, WatchlistUpdate
+from app.services.quote_source import quote_with_fallback
 
 log = logging.getLogger(__name__)
 
@@ -66,7 +67,7 @@ async def list_items(
 
 async def _safe_quote(symbol: str) -> QuoteOut | None:
     try:
-        q = await get_registry().quote(normalize(symbol))
+        q = await quote_with_fallback(get_registry(), normalize(symbol))
     except (DataNotFound, SymbolError) as exc:
         log.info("自选股 %s 行情获取失败：%s", symbol, exc)
         return None

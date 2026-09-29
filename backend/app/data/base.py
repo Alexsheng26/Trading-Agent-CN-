@@ -49,6 +49,12 @@ class Quote:
     total_market_cap: float | None = None  # 总市值（元）
     float_market_cap: float | None = None  # 流通市值（元）
     updated_at: datetime | None = None
+    #: 是否来自实时接口。False 表示这是"最近一根日线的收盘价"——
+    #: 在所有实时接口都不可用时的兜底。界面必须显著标注，
+    #: 绝不能让盘中看到的其实是昨天的收盘价却毫不知情。
+    is_realtime: bool = True
+    #: 这份价格对应的交易日。非实时时一定要有，用来告诉用户"这是哪天的价"
+    quote_date: date | None = None
 
 
 @dataclass(slots=True)

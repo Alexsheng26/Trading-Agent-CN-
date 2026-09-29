@@ -260,7 +260,9 @@ def test_capabilities_are_narrow() -> None:
     from app.data.backup_providers import SinaProvider, XueqiuProvider
 
     assert XueqiuProvider().capabilities == {"quote"}
-    assert SinaProvider().capabilities == {"daily_bars", "index_quotes"}
+    # sina 的 search 只给后台建代码目录用（它要翻 60 多页且有封 IP 风险），
+    # 请求路径上的搜索查的是本地表
+    assert SinaProvider().capabilities == {"daily_bars", "index_quotes", "search"}
 
 
 async def test_degrades_to_backup_when_eastmoney_quote_fails() -> None:
@@ -296,3 +298,74 @@ async def test_degrades_to_backup_when_eastmoney_quote_fails() -> None:
     assert quote.name == "华宝股份"
     assert quote.price == 28.66
     assert registry.last_sources[CAP_QUOTE] == "xueqiu", "溯源要如实说是雪球给的"
+
+
+# ---------------------------------------------------------------- 雪球 token
+
+
+async def test_xueqiu_passes_token_when_configured(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from app.core.config import get_settings
+    from app.data.backup_providers import XueqiuProvider
+
+    monkeypatch.setenv("XUEQIU_TOKEN", "abc123")
+    get_settings.cache_clear()
+
+    seen: dict = {}
+    p = XueqiuProvider()
+
+    async def fake_call(func_name: str, /, **kwargs):  # type: ignore[no-untyped-def]
+        seen.update(kwargs)
+        return _kv(XQ)
+
+    p._call = fake_call  # type: ignore[assignment, method-assign]
+    await p.quote(SYMBOL)
+    assert seen["token"] == "abc123"
+    get_settings.cache_clear()
+
+
+async def test_xueqiu_omits_token_when_not_configured(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """不配 token 时不能传空串过去 —— 那会被当成一个无效凭证。"""
+    from app.core.config import get_settings
+    from app.data.backup_providers import XueqiuProvider
+
+    monkeypatch.setenv("XUEQIU_TOKEN", "")
+    get_settings.cache_clear()
+
+    seen: dict = {}
+    p = XueqiuProvider()
+
+    async def fake_call(func_name: str, /, **kwargs):  # type: ignore[no-untyped-def]
+        seen.update(kwargs)
+        return _kv(XQ)
+
+    p._call = fake_call  # type: ignore[assignment, method-assign]
+    await p.quote(SYMBOL)
+    assert "token" not in seen
+    get_settings.cache_clear()
+
+
+async def test_xueqiu_login_error_says_how_to_fix(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """雪球未登录返回 400016。原样透出去用户看不懂，要补上怎么配。"""
+    from app.core.config import get_settings
+    from app.data.backup_providers import XueqiuProvider
+
+    monkeypatch.setenv("XUEQIU_TOKEN", "")
+    get_settings.cache_clear()
+
+    p = _stub(
+        XueqiuProvider(),
+        {
+            "stock_individual_spot_xq": ProviderUnavailable(
+                "API Error: Xueqiu quote endpoint requires a valid xq_a_token or login "
+                "session; upstream returned 400016"
+            )
+        },
+    )
+    with pytest.raises(ProviderUnavailable) as err:
+        await p.quote(SYMBOL)
+
+    msg = str(err.value)
+    assert "xq_a_token" in msg
+    assert "XUEQIU_TOKEN" in msg
+    assert "自动降级" in msg, "要说明不配也能用，别让人以为必须配"
+    get_settings.cache_clear()
