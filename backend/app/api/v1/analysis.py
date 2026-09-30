@@ -19,6 +19,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents.profile import ProfileError, describe_options
+from app.core.config import get_settings
 from app.core.errors import SymbolError
 from app.db.models import AnalysisRun
 from app.db.session import get_session
@@ -37,6 +39,16 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/analysis", tags=["分析"])
 
 
+@router.get("/options", summary="可选的分析深度与模型")
+async def options() -> dict:
+    """每一档在**当前模型厂商**下实际会改变什么。
+
+    同一个"深度"在 Claude 下是调高推理投入，在 DeepSeek 下是换推理模型 ——
+    所以说明文字由后端按配置生成，前端不写死。
+    """
+    return describe_options(get_settings())
+
+
 @router.post("/runs", response_model=AnalysisStartedOut, status_code=202, summary="发起一次分析")
 async def create_run(
     payload: AnalysisRequest,
@@ -44,8 +56,14 @@ async def create_run(
 ) -> AnalysisStartedOut:
     service = AnalysisService(session)
     try:
-        run_id = await service.start(payload.symbol, payload.horizon, payload.user_note)
-    except SymbolError as exc:
+        run_id = await service.start(
+            payload.symbol,
+            payload.horizon,
+            payload.user_note,
+            depth=payload.depth,
+            model=payload.model,
+        )
+    except (SymbolError, ProfileError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return AnalysisStartedOut(
@@ -135,6 +153,7 @@ async def list_runs(
                 status=r.status,
                 action=(r.decision or {}).get("action"),
                 conviction=(r.decision or {}).get("conviction"),
+                depth=(r.config or {}).get("depth"),
                 created_at=r.created_at,
                 elapsed_sec=r.elapsed_sec,
             )
@@ -188,6 +207,7 @@ def _to_out(run: AnalysisRun) -> AnalysisRunOut:
         data_warnings=run.data_warnings,
         usage=run.usage,
         llm_provider=run.llm_provider,
+        config=run.config,
         elapsed_sec=run.elapsed_sec,
         created_at=run.created_at,
         finished_at=run.finished_at,

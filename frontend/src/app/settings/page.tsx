@@ -67,7 +67,34 @@ DATA_PROVIDER_ORDER=akshare,tushare`}
         <Row label="后端" value={providerLabel(status.llm.provider)} />
         <Row label="决策模型" value={status.llm.model} />
         {status.llm.analyst_model && <Row label="分析师模型" value={status.llm.analyst_model} />}
-        <Row label="推理投入" value={status.llm.effort} />
+        {status.llm.provider === "anthropic" ? (
+          <Row label="推理投入（标准档）" value={status.llm.effort} />
+        ) : (
+          status.llm.provider === "openai_compat" && (
+            <Row
+              label="推理模型"
+              value={status.llm.reasoning_model || "未配置"}
+              tone={status.llm.reasoning_model ? "normal" : "warn"}
+              hint="深度档的风控与决策用它"
+            />
+          )
+        )}
+        {!status.llm.is_stub && (
+          <Row
+            label="可手选的模型"
+            value={
+              status.llm.model_choices && status.llm.model_choices.length > 1
+                ? `${status.llm.model_choices.length} 个`
+                : "只有主模型"
+            }
+            hint="LLM_MODEL_CHOICES"
+          />
+        )}
+        <p className="px-4 py-3 text-[11px] leading-relaxed text-[var(--muted)]">
+          每次分析可以在分析页选「快速 / 标准 / 深度」，这里显示的是标准档的默认值。{""}
+          {status.llm.provider === "openai_compat" &&
+            "DeepSeek 这类兼容接口没有“推理投入”参数，档位靠辩论轮数和推理模型区分。"}
+        </p>
       </Section>
 
       <Section title="数据源">
@@ -100,8 +127,16 @@ DATA_PROVIDER_ORDER=akshare,tushare`}
       </Section>
 
       <Section title="流水线">
-        <Row label="多空辩论轮数" value={String(status.pipeline.debate_rounds)} />
-        <Row label="单次超时" value={`${status.pipeline.timeout_sec} 秒`} />
+        <Row
+          label="多空辩论轮数（标准档）"
+          value={String(status.pipeline.debate_rounds)}
+          hint={`快速 ${Math.min(1, status.pipeline.debate_rounds)} · 深度 ${status.pipeline.debate_rounds + 1}`}
+        />
+        <Row
+          label="单次超时（标准档）"
+          value={`${status.pipeline.timeout_sec} 秒`}
+          hint="深度档 ×1.5"
+        />
         <Row label="进行中的分析" value={String(status.active_runs)} />
       </Section>
 

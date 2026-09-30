@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { AgentCard } from "@/components/AgentCard";
 import { DecisionPanel } from "@/components/DecisionPanel";
+import { DepthPicker, RunConfigLine } from "@/components/DepthPicker";
 import { FibPanel } from "@/components/FibPanel";
 import { LivePrice } from "@/components/LivePrice";
 import { PriceChart } from "@/components/PriceChart";
@@ -17,7 +18,27 @@ import { api } from "@/lib/api";
 import { fmtMoney, fmtNum, fmtPct } from "@/lib/format";
 import { useAnalysisStream } from "@/lib/useAnalysisStream";
 import { useLiveQuote } from "@/lib/useLiveQuote";
-import type { Bar, Horizon, Indicators } from "@/lib/types";
+import type { AnalysisOptions, Bar, Depth, Horizon, Indicators } from "@/lib/types";
+
+// 记住上次选的档位（只是本机的便利，读写失败就用默认值）
+const DEPTH_KEY = "analyze.depth";
+
+function loadDepth(): Depth | null {
+  try {
+    const v = window.localStorage.getItem(DEPTH_KEY);
+    return v === "quick" || v === "standard" || v === "deep" ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveDepth(d: Depth): void {
+  try {
+    window.localStorage.setItem(DEPTH_KEY, d);
+  } catch {
+    // 隐私模式等场景写不进去，无所谓
+  }
+}
 
 const HORIZONS: { value: Horizon; hint: string }[] = [
   { value: "短线", hint: "1-5 个交易日" },
@@ -41,6 +62,10 @@ function AnalyzeInner() {
 
   const [horizon, setHorizon] = useState<Horizon>("波段");
   const [note, setNote] = useState("");
+  const [depth, setDepth] = useState<Depth>("standard");
+  // "" = 按档位自动选模型
+  const [model, setModel] = useState("");
+  const [options, setOptions] = useState<AnalysisOptions | null>(null);
   // 斐波那契默认叠加在图上 —— 用户点进个股就是想看关键价位
   const [showFib, setShowFib] = useState(true);
   const [runId, setRunId] = useState<string | null>(runIdParam);
@@ -54,6 +79,29 @@ function AnalyzeInner() {
   const live = useLiveQuote(symbol);
   const quote = live.quote;
   const stream = useAnalysisStream(runId);
+
+  useEffect(() => {
+    const saved = loadDepth();
+    if (saved) setDepth(saved);
+    let alive = true;
+    api
+      .analysisOptions()
+      .then((o) => {
+        if (!alive) return;
+        setOptions(o);
+        // 后端的可选模型变了（改过 .env），之前选的不在列表里就回到自动
+        setModel((m) => (m && !o.models.some((x) => x.value === m) ? "" : m));
+      })
+      .catch(() => undefined); // 拿不到就用兜底的三档按钮，照样能分析
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const pickDepth = useCallback((d: Depth) => {
+    setDepth(d);
+    saveDepth(d);
+  }, []);
 
   // 换标的时清掉上一次的结果
   useEffect(() => {
@@ -85,7 +133,7 @@ function AnalyzeInner() {
     setStarting(true);
     setError(null);
     try {
-      const { run_id } = await api.startAnalysis(symbol, horizon, note);
+      const { run_id } = await api.startAnalysis(symbol, horizon, note, { depth, model });
       setRunId(run_id);
       // 写进 URL：刷新页面/分享链接都能回到这次分析
       router.replace(`/analyze?symbol=${encodeURIComponent(symbol)}&run=${run_id}`);
@@ -94,7 +142,7 @@ function AnalyzeInner() {
     } finally {
       setStarting(false);
     }
-  }, [symbol, horizon, note, router]);
+  }, [symbol, horizon, note, depth, model, router]);
 
   if (!symbol) {
     return (
@@ -199,6 +247,16 @@ function AnalyzeInner() {
             ))}
           </div>
 
+          <div className="mt-4">
+            <DepthPicker
+              options={options}
+              depth={depth}
+              onDepth={pickDepth}
+              model={model}
+              onModel={setModel}
+            />
+          </div>
+
           <label className="mt-4 block text-sm font-medium" htmlFor="note">
             想让智能体特别关注什么？<span className="font-normal text-[var(--muted)]">（可选）</span>
           </label>
@@ -221,7 +279,7 @@ function AnalyzeInner() {
             {starting ? "启动中…" : "开始分析"}
           </button>
           <p className="mt-2 text-[11px] text-[var(--muted)]">
-            整套流水线约需 1-3 分钟。中途可以锁屏或切走，回来后进度会自动接上。
+            标准档约需 1-3 分钟，快速档更短、深度档明显更长。中途可以锁屏或切走，回来后进度会自动接上。
           </p>
         </div>
       )}
@@ -236,6 +294,7 @@ function AnalyzeInner() {
       {runId && (
         <div className="mt-5">
           <ConnectionBar state={stream} onRestart={() => setRunId(null)} />
+          <RunConfigLine config={stream.config} />
 
           {stream.pipeline.length > 0 && (
             <div className="mt-3">

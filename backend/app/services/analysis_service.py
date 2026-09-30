@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.context import AnalysisContext
 from app.agents.orchestrator import AnalysisOrchestrator, Event
+from app.agents.profile import Depth, RunProfile, resolve_profile
 from app.core.clock import now_utc
 from app.core.config import get_settings
 from app.db.models import AgentOutputRow, AnalysisRun
@@ -33,11 +34,23 @@ class AnalysisService:
 
     # ------------------------------------------------------------ 启动
 
-    async def start(self, symbol_raw: str, horizon: str = "波段", user_note: str = "") -> str:
-        """登记一次分析并在后台启动，立刻返回 run_id。"""
+    async def start(
+        self,
+        symbol_raw: str,
+        horizon: str = "波段",
+        user_note: str = "",
+        *,
+        depth: Depth = "standard",
+        model: str | None = None,
+    ) -> str:
+        """登记一次分析并在后台启动，立刻返回 run_id。
+
+        档位和模型在这里就解析并校验 —— 不合法直接 400，而不是建了记录再失败。
+        """
         from app.data.symbols import normalize  # noqa: PLC0415 —— 避免循环导入
 
         symbol = normalize(symbol_raw)
+        profile = resolve_profile(self._settings, depth, model)
         run_id = uuid.uuid4().hex
 
         run = AnalysisRun(
@@ -47,22 +60,34 @@ class AnalysisService:
             user_note=user_note,
             status="pending",
             llm_provider=self._settings.llm_provider,
+            config=profile.as_record(),
         )
         self._session.add(run)
         await self._session.commit()
 
         buffer = store.create(run_id)
-        buffer.task = asyncio.create_task(self._execute(run_id, symbol_raw, horizon, user_note))
+        buffer.task = asyncio.create_task(
+            self._execute(run_id, symbol_raw, horizon, user_note, profile)
+        )
         return run_id
 
     # ------------------------------------------------------------ 后台执行
 
-    async def _execute(self, run_id: str, symbol_raw: str, horizon: str, user_note: str) -> None:
+    async def _execute(
+        self,
+        run_id: str,
+        symbol_raw: str,
+        horizon: str,
+        user_note: str,
+        profile: RunProfile | None = None,
+    ) -> None:
         """后台任务。用自己的 session —— 请求的 session 早就关了。"""
         from app.data.symbols import normalize  # noqa: PLC0415
 
         buffer = store.get(run_id)
         assert buffer is not None
+        profile = profile or resolve_profile(self._settings, "standard")
+        timeout = round(self._settings.analysis_timeout * profile.timeout_scale)
 
         outputs: dict[str, dict] = {}
         decision: dict | None = None
@@ -70,14 +95,14 @@ class AnalysisService:
         error = ""
 
         try:
-            async with asyncio.timeout(self._settings.analysis_timeout):
+            async with asyncio.timeout(timeout):
                 symbol = normalize(symbol_raw)
                 snapshot = await MarketDataService().snapshot(symbol)
                 ctx = AnalysisContext.build(snapshot, horizon=horizon, user_note=user_note)
 
                 await self._set_status(run_id, "running", name=ctx.display_name)
 
-                orchestrator = AnalysisOrchestrator(get_llm(), self._settings)
+                orchestrator = AnalysisOrchestrator(get_llm(), self._settings, profile)
                 async for event in orchestrator.run(ctx, run_id=run_id):
                     buffer.append(event)
                     match event.type:
@@ -95,8 +120,8 @@ class AnalysisService:
                             error = event.data.get("message", "未知错误")
         except TimeoutError:
             error = (
-                f"分析超时（超过 {self._settings.analysis_timeout} 秒），"
-                "请稍后重试或降低 DEBATE_ROUNDS"
+                f"分析超时（超过 {timeout} 秒）。可以改用“快速”档，"
+                "或在 .env 里调大 ANALYSIS_TIMEOUT 后执行 docker compose up -d"
             )
             log.warning("run %s %s", run_id, error)
             buffer.append(Event("error", {"run_id": run_id, "message": error}))

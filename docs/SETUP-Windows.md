@@ -193,10 +193,30 @@ ANTHROPIC_ANALYST_MODEL=claude-sonnet-5
 Sonnet 的价格是 Opus 的 40%，而分析师干的是"读数据写结论"这类相对直接的活，
 单次成本能降到 $0.2-0.3 左右。
 
-还想再省，可以减少辩论轮数（默认 2 轮，每轮多空各发言一次）：
+还想再省，最简单的是在分析页把「分析深度」选成**快速**（辩论只跑 1 轮）——
+按次选，重要的票再切回标准或深度。想让所有分析默认都少跑几轮，就改标准档的轮数
+（默认 2 轮，每轮多空各发言一次；快速档 = min(1, 它)，深度档 = 它 + 1）：
 
 ```ini
 DEBATE_ROUNDS=1
+```
+
+### 6.5 用 DeepSeek 时让「深度」档真正加码
+
+DeepSeek 这类兼容接口没有 Claude 的「推理投入」参数，所以默认情况下深度档只比
+标准档多一轮辩论。配上推理模型后，深度档的风控和决策两步会改用它：
+
+```ini
+OPENAI_COMPAT_REASONING_MODEL=deepseek-reasoner
+```
+
+模型名以 DeepSeek 文档为准。改完执行 `docker compose up -d`，
+分析页选「深度」时说明文字里会出现「风控与决策改用 deepseek-reasoner」。
+
+想在分析页「高级」里手选别的模型，把名字加到这里（逗号分隔，只接受列表里的）：
+
+```ini
+LLM_MODEL_CHOICES=deepseek-chat,deepseek-reasoner
 ```
 
 ---
@@ -425,7 +445,8 @@ docker compose logs -f backend
 常见原因：
 - `Claude 鉴权失败` → `ANTHROPIC_API_KEY` 填错了，或者 Anthropic 账户没充值
 - `触发 Claude 速率限制` → 新账户额度低，在 `.env` 里设 `DEBATE_ROUNDS=1` 降低并发
-- `分析超时` → 在 `.env` 里把 `ANALYSIS_TIMEOUT` 调大，比如 `900`
+- `分析超时` → 先试分析页的「快速」档；还不行就在 `.env` 里把 `ANALYSIS_TIMEOUT`
+  调大，比如 `900`（这是标准档的值，深度档自动放宽到 1.5 倍）
 
 ### 构建前端时报 `pnpm install --frozen-lockfile` 失败
 如果报错里提到 `minimumReleaseAge` 或 `the active policies reject`，说明你的 pnpm

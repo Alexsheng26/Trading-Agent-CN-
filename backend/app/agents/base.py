@@ -69,9 +69,22 @@ class LLMAgent:
     #: 推理投入，None 表示用全局默认
     effort: Effort | None = None
 
-    def __init__(self, llm: LLMClient, model: str | None = None) -> None:
+    def __init__(
+        self,
+        llm: LLMClient,
+        model: str | None = None,
+        *,
+        effort: Effort | None = None,
+        max_tokens: int | None = None,
+    ) -> None:
         self._llm = llm
         self._model = model
+        # 分析档位按次覆盖这两个类属性（见 app/agents/profile.py）；
+        # 不传就沿用类上的默认值
+        if effort is not None:
+            self.effort = effort
+        if max_tokens is not None:
+            self.max_tokens = max_tokens
 
     # ------------------------------------------------------------ 可覆写
 

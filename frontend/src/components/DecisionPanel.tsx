@@ -95,6 +95,12 @@ export function DecisionPanel({ decision }: { decision: Decision }) {
         </div>
       )}
 
+      {decision.fallback_note && (
+        <p className="border-t border-[var(--border)] bg-[var(--warn-soft)] px-4 py-2 text-[11px] leading-relaxed text-[var(--warn)] md:px-5">
+          {decision.fallback_note}
+        </p>
+      )}
+
       {decision.disclaimer && (
         <p className="border-t border-[var(--border)] px-4 py-3 text-[11px] leading-relaxed text-[var(--muted)] md:px-5">
           {decision.disclaimer.replace(/\*\*/g, "")}

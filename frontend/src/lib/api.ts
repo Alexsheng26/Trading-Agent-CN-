@@ -3,9 +3,11 @@
 // 手机上只需要访问前端一个地址。
 
 import type {
+  AnalysisOptions,
   AnalysisRun,
   AnalysisRunSummary,
   Bar,
+  Depth,
   Diagnosis,
   Indicators,
   IndexQuote,
@@ -89,10 +91,26 @@ export const api = {
     ),
 
   // ---------- 分析 ----------
-  startAnalysis: (symbol: string, horizon: string, userNote = "") =>
+  /** 可选的分析深度与模型。说明文字按当前模型厂商生成 */
+  analysisOptions: () => request<AnalysisOptions>("/analysis/options"),
+  startAnalysis: (
+    symbol: string,
+    horizon: string,
+    userNote = "",
+    opts: { depth?: Depth; model?: string | null } = {},
+  ) =>
     request<{ run_id: string; symbol: string; status: string; stream_url: string }>(
       "/analysis/runs",
-      { method: "POST", body: JSON.stringify({ symbol, horizon, user_note: userNote }) },
+      {
+        method: "POST",
+        body: JSON.stringify({
+          symbol,
+          horizon,
+          user_note: userNote,
+          depth: opts.depth ?? "standard",
+          model: opts.model || null,
+        }),
+      },
     ),
   getRun: (runId: string) => request<AnalysisRun>(`/analysis/runs/${runId}`),
   listRuns: (params: { symbol?: string; limit?: number; offset?: number } = {}) => {

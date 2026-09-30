@@ -33,6 +33,7 @@ from typing import Any, Literal
 
 from app.agents.base import AgentOutput, LLMAgent
 from app.agents.context import AnalysisContext
+from app.agents.profile import RunProfile, resolve_profile
 from app.agents.prompts import DECISION_SCHEMA, DISCLAIMER, TRADER, with_discipline
 from app.agents.roster import (
     ANALYST_CLASSES,
@@ -43,7 +44,8 @@ from app.agents.roster import (
 )
 from app.core.clock import now_utc
 from app.core.config import Settings, get_settings
-from app.llm.base import LLMClient, Message, Usage
+from app.core.errors import LLMError
+from app.llm.base import Completion, LLMClient, Message, Usage
 
 log = logging.getLogger(__name__)
 
@@ -85,9 +87,12 @@ class AnalysisOrchestrator:
         self,
         llm: LLMClient,
         settings: Settings | None = None,
+        profile: RunProfile | None = None,
     ) -> None:
         self._llm = llm
         self._settings = settings or get_settings()
+        # 不指定档位就是标准档 —— 和引入档位之前的行为完全一致
+        self._profile = profile or resolve_profile(self._settings, "standard")
 
     # ------------------------------------------------------------ 主流程
 
@@ -96,8 +101,7 @@ class AnalysisOrchestrator:
         board: dict[str, AgentOutput] = {}
         started = time.time()
 
-        analyst_model = self._model_for("analyst")
-        decision_model = self._model_for("decision")
+        profile = self._profile
 
         yield Event(
             "run_start",
@@ -110,34 +114,35 @@ class AnalysisOrchestrator:
                 "data_sources": ctx.snapshot.sources,
                 "data_warnings": ctx.snapshot.warnings,
                 "pipeline": self._pipeline_plan(),
+                "config": profile.as_record(),
             },
         )
 
         try:
             # ---------- 第一阶段：分析师并发 ----------
             yield Event("stage_start", {"stage": "analysts", "label": STAGE_LABELS["analysts"]})
-            analysts = [cls(self._llm, analyst_model) for cls in ANALYST_CLASSES]
+            analysts = [self._agent(cls, "analyst") for cls in ANALYST_CLASSES]
             async for event in self._run_concurrent(analysts, ctx, board):
                 yield event
 
             # ---------- 第二阶段：多空辩论串行 ----------
-            rounds = max(0, self._settings.debate_rounds)
+            rounds = profile.debate_rounds
             if rounds:
                 yield Event("stage_start", {"stage": "debate", "label": STAGE_LABELS["debate"]})
                 for round_no in range(1, rounds + 1):
                     for cls in (BullResearcher, BearResearcher):
-                        agent = cls(self._llm, analyst_model, round_no=round_no)
+                        agent = self._agent(cls, "analyst", round_no=round_no)
                         async for event in self._run_one(agent, ctx, board):
                             yield event
 
             # ---------- 第三阶段：风控 ----------
             yield Event("stage_start", {"stage": "risk", "label": STAGE_LABELS["risk"]})
-            async for event in self._run_one(RiskManager(self._llm, decision_model), ctx, board):
+            async for event in self._run_one(self._agent(RiskManager, "decision"), ctx, board):
                 yield event
 
             # ---------- 第四阶段：交易决策 ----------
             yield Event("stage_start", {"stage": "decision", "label": STAGE_LABELS["decision"]})
-            decision, decision_usage = await self._decide(ctx, board, decision_model)
+            decision, decision_usage = await self._decide(ctx, board)
             yield Event("decision", {"decision": decision})
 
             total = sum((o.usage for o in board.values()), Usage()) + decision_usage
@@ -240,7 +245,7 @@ class AnalysisOrchestrator:
     # ------------------------------------------------------------ 决策
 
     async def _decide(
-        self, ctx: AnalysisContext, board: dict[str, AgentOutput], model: str | None
+        self, ctx: AnalysisContext, board: dict[str, AgentOutput]
     ) -> tuple[dict[str, Any], Usage]:
         user_content = "\n".join(
             [
@@ -261,12 +266,9 @@ class AnalysisOrchestrator:
             ]
         )
 
-        completion = await self._llm.complete(
+        completion, fallback_note = await self._complete_decision(
             [ctx.market_brief(), with_discipline(TRADER)],
             [Message(role="user", content=user_content)],
-            model=model,
-            max_tokens=4000,
-            json_schema=DECISION_SCHEMA,
         )
 
         decision = completion.data or {}
@@ -289,16 +291,73 @@ class AnalysisOrchestrator:
                 "raw_text": completion.text[:2000],
             }
 
+        if fallback_note:
+            decision["fallback_note"] = fallback_note
         decision = _sanitize_decision(decision, ctx)
         return decision, completion.usage
 
+    async def _complete_decision(
+        self, system_blocks: list[str], messages: list[Message]
+    ) -> tuple[Completion, str]:
+        """跑决策这一步。换过模型、却没拿到可用决策时，用厂商默认模型重做一次。
+
+        为什么需要：决策是唯一要求结构化 JSON 的一步。深度档可能把它交给
+        推理模型，用户也可能手选一个模型 —— 这些模型不一定支持 JSON 输出，
+        推理过长时还可能把输出额度耗尽、正文为空。那样整次分析会落到
+        "观望 / 结论不可用"的兜底上，前面十来次调用全白跑。
+        重做只发生在**模型被换过**时；默认模型自己失败就如实失败，不掩盖。
+
+        返回 (结果, 说明)。说明非空表示发生过重做，会显示在决策面板上。
+        """
+        profile = self._profile
+        model = profile.decision_model
+
+        async def attempt(use_model: str | None) -> Completion:
+            return await self._llm.complete(
+                system_blocks,
+                messages,
+                model=use_model,
+                max_tokens=profile.max_tokens(4000),
+                effort=profile.decision_effort,
+                json_schema=DECISION_SCHEMA,
+            )
+
+        can_retry = bool(profile.default_model and model and model != profile.default_model)
+        try:
+            completion = await attempt(model)
+        except LLMError as exc:
+            if not can_retry:
+                raise
+            log.warning("决策模型 %s 调用失败，改用 %s 重做：%s", model, profile.default_model, exc)
+            retried = await attempt(profile.default_model)
+            return retried, f"{model} 调用失败，这一步已改用 {profile.default_model} 重做"
+
+        if completion.data or not can_retry:
+            return completion, ""
+
+        log.warning("决策模型 %s 未返回可解析的 JSON，改用 %s 重做", model, profile.default_model)
+        retried = await attempt(profile.default_model)
+        retried.usage = completion.usage + retried.usage
+        return retried, f"{model} 没有返回可解析的决策，这一步已改用 {profile.default_model} 重做"
+
     # ------------------------------------------------------------ 辅助
 
-    def _model_for(self, kind: Literal["analyst", "decision"]) -> str | None:
-        """分析师可以用便宜些的模型，决策环节用主模型。"""
-        if self._settings.llm_provider != "anthropic":
-            return None
-        return self._settings.analyst_model if kind == "analyst" else self._settings.anthropic_model
+    def _agent(
+        self, cls: type[LLMAgent], role: Literal["analyst", "decision"], **kwargs: Any
+    ) -> LLMAgent:
+        """按档位装配一个智能体。
+
+        分析师和辩论双方归 "analyst"，风控归 "decision" —— 和决策员同一档模型与推理投入。
+        """
+        p = self._profile
+        analyst = role == "analyst"
+        return cls(
+            self._llm,
+            p.analyst_model if analyst else p.decision_model,
+            effort=p.analyst_effort if analyst else p.decision_effort,
+            max_tokens=p.max_tokens(cls.max_tokens),
+            **kwargs,
+        )
 
     def _pipeline_plan(self) -> list[dict[str, Any]]:
         """告诉前端总共会有哪些智能体，好先把骨架画出来。"""
@@ -309,7 +368,7 @@ class AnalysisOrchestrator:
                 "agents": [{"key": c.key, "label": c.label} for c in ANALYST_CLASSES],
             }
         ]
-        rounds = max(0, self._settings.debate_rounds)
+        rounds = self._profile.debate_rounds
         if rounds:
             debate_agents = []
             for round_no in range(1, rounds + 1):

@@ -41,6 +41,10 @@ class AnalysisRun(Base):
     usage: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     llm_provider: Mapped[str] = mapped_column(String(32), default="")
+    #: 这次用的档位、模型与推理投入（见 app/agents/profile.py 的 as_record）。
+    #: 可空：引入档位之前的老记录没有这一列的值。
+    #: ⚠️ 新增列必须可空 —— 老数据库靠 init_db 里的增量补列升级，补不了非空列。
+    config: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     elapsed_sec: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # UtcDateTime + Python 侧默认值：

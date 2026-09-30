@@ -177,6 +177,24 @@ OPENAI_COMPAT_API_KEY=sk-...
 OPENAI_COMPAT_MODEL=deepseek-chat
 ```
 
+### 分析深度：按次选，按厂商翻译
+
+分析页可以按次选「快速 / 标准 / 深度」，而不是只能用 `.env` 里的全局配置。
+对外只暴露档位、不直接给 effort 滑块，是因为各家能调的东西不一样 ——
+DeepSeek 等兼容接口根本没有 effort 参数，给个滑块也是假开关：
+
+| 档位 | 辩论轮数 | 调用次数（默认配置） | Claude | DeepSeek 等兼容接口 |
+| --- | --- | --- | --- | --- |
+| 快速 | min(1, N) | 8 | 推理投入下调两档 / 一档 | 只少辩论 |
+| 标准 | `DEBATE_ROUNDS` | 10 | `LLM_EFFORT` | 主模型 |
+| 深度 | N + 1 | 12 | 推理投入上调一档 / 两档 | 风控与决策改用 `OPENAI_COMPAT_REASONING_MODEL` |
+
+- **标准档和之前的行为完全一致**，不改任何配置结果不变。
+- 每一档具体改了什么由后端按当前配置生成（`GET /api/v1/analysis/options`），前端不写死。
+- 「高级」里可以手选模型，但只接受白名单（已配置的模型 + `LLM_MODEL_CHOICES`）。
+- 每次分析的档位、模型、推理投入都会落库，回看历史时能分清结论差异来自行情还是档位。
+- 决策这一步换过模型（推理模型、手选模型）却没拿到可解析的决策时，自动用主模型重做一次，并在决策面板上注明。
+
 ### 斐波那契回撤
 
 自动斐波那契：取最近 60 个交易日的最高/最低价作摆动端点，按两者的**先后顺序**
@@ -253,7 +271,8 @@ cd frontend && pnpm icons   # 改了 icon.svg 后重新生成 PWA 图标
 | GET | `/api/v1/market/indicators/{symbol}` | 技术指标快照 + 形态标签 |
 | GET | `/api/v1/market/diagnose` | 逐接口探测每个数据源，报告失败原因（排查用，慢）|
 | GET/POST | `/api/v1/market/symbols/status`、`/refresh` | 本地代码目录状态 / 重建 |
-| POST | `/api/v1/analysis/runs` | 发起分析，立刻返回 `run_id` |
+| GET | `/api/v1/analysis/options` | 可选的分析深度与模型（说明按当前模型厂商生成）|
+| POST | `/api/v1/analysis/runs` | 发起分析（可带 `depth`、`model`），立刻返回 `run_id` |
 | GET | `/api/v1/analysis/runs/{id}/stream` | SSE 实时进度（支持 `Last-Event-ID` 续传）|
 | GET | `/api/v1/analysis/runs/{id}` | 读取分析结果（已落库）|
 | GET/POST/PATCH/DELETE | `/api/v1/watchlist` | 自选股管理 |

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
 
 def _wait_done(client, run_id: str, timeout: float = 20.0) -> dict:
     """轮询等分析跑完。"""
@@ -278,6 +280,55 @@ def test_run_history_and_delete(client) -> None:  # type: ignore[no-untyped-def]
 
     assert client.delete(f"/api/v1/analysis/runs/{run_id}").status_code == 204
     assert client.get(f"/api/v1/analysis/runs/{run_id}").status_code == 404
+
+
+def test_analysis_options(client) -> None:  # type: ignore[no-untyped-def]
+    body = client.get("/api/v1/analysis/options").json()
+    assert body["default_depth"] == "standard"
+    assert [d["value"] for d in body["depths"]] == ["quick", "standard", "deep"]
+    # 测试环境 DEBATE_ROUNDS=1：快速 1 轮 / 标准 1 轮 / 深度 2 轮
+    assert [d["llm_calls"] for d in body["depths"]] == [8, 8, 10]
+    assert body["models"] == [], "离线桩没有可选模型"
+
+
+@pytest.mark.parametrize(("depth", "agents"), [("standard", 7), ("deep", 9)])
+def test_analysis_records_depth(client, depth: str, agents: int) -> None:  # type: ignore[no-untyped-def]
+    """档位要真的生效，并且落库 —— 回看历史时才分得清用的是哪一档。"""
+    run_id = client.post(
+        "/api/v1/analysis/runs", json={"symbol": "600519", "depth": depth}
+    ).json()["run_id"]
+    run = _wait_done(client, run_id)
+
+    assert run["status"] == "done"
+    assert run["config"]["depth"] == depth
+    assert len(run["outputs"]) == agents  # 深度档多一轮辩论（2 人）
+
+    listing = client.get("/api/v1/analysis/runs", params={"symbol": "600519.SH"}).json()
+    assert any(i["id"] == run_id and i["depth"] == depth for i in listing["items"])
+
+
+def test_analysis_defaults_to_standard(client) -> None:  # type: ignore[no-untyped-def]
+    run_id = client.post("/api/v1/analysis/runs", json={"symbol": "600519"}).json()["run_id"]
+    assert _wait_done(client, run_id)["config"]["depth"] == "standard"
+
+
+def test_analysis_rejects_unlisted_model(client) -> None:  # type: ignore[no-untyped-def]
+    before = client.get("/api/v1/analysis/runs").json()["total"]
+    resp = client.post("/api/v1/analysis/runs", json={"symbol": "600519", "model": "gpt-x"})
+    assert resp.status_code == 400
+    # 先校验再建记录：被拒的请求不能在历史里留下一条永远 pending 的空记录
+    assert client.get("/api/v1/analysis/runs").json()["total"] == before
+
+
+def test_analysis_rejects_bad_depth(client) -> None:  # type: ignore[no-untyped-def]
+    resp = client.post("/api/v1/analysis/runs", json={"symbol": "600519", "depth": "ultra"})
+    assert resp.status_code == 422
+
+
+def test_status_lists_model_choices(client) -> None:  # type: ignore[no-untyped-def]
+    llm = client.get("/api/v1/status").json()["llm"]
+    assert llm["model_choices"] == []
+    assert llm["reasoning_model"] is None
 
 
 def test_missing_run_returns_404(client) -> None:  # type: ignore[no-untyped-def]

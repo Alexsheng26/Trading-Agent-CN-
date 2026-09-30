@@ -72,7 +72,10 @@ export default function RunsPage() {
                   <span className="tabular shrink-0 text-xs text-[var(--muted)]">{run.symbol}</span>
                 </div>
                 <div className="mt-0.5 text-[11px] text-[var(--muted)]">
-                  {run.horizon} · {fmtRelative(run.created_at)}
+                  {run.horizon}
+                  {/* 标准档是默认，不标；快速/深度标出来，回看时一眼分得清 */}
+                  {run.depth === "quick" && " · 快速档"}
+                  {run.depth === "deep" && " · 深度档"} · {fmtRelative(run.created_at)}
                   {run.elapsed_sec != null && ` · ${run.elapsed_sec}s`}
                   {run.status !== "done" && ` · ${statusLabel(run.status)}`}
                 </div>

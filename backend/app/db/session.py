@@ -6,7 +6,7 @@ import logging
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from sqlalchemy import event
+from sqlalchemy import event, inspect, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -93,14 +93,55 @@ def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
 
 
 async def init_db() -> None:
-    """建表。
+    """建表，并给老数据库补上后来新增的列。
 
-    单人使用的小工具用 create_all 足够；表结构一旦要演进，
-    引入 alembic 做迁移（见 docs/ARCHITECTURE.md）。
+    `create_all` 只建**不存在的表**，对已存在的表一个字都不改。用户机器上的
+    数据库是老版本建的，新版本给表加了列之后，读写立刻报 `no such column` ——
+    升级即挂。所以建完表再补一遍缺的列。
+
+    只做"加列"这一种变更（且新列必须可空）。改列类型、删列、改约束这类
+    破坏性演进，届时引入 alembic 做正式迁移（见 docs/ARCHITECTURE.md）。
     """
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        added = await conn.run_sync(_add_missing_columns)
+    for table, column in added:
+        log.info("数据库升级：%s 表新增列 %s", table, column)
+
+
+def _add_missing_columns(sync_conn) -> list[tuple[str, str]]:  # type: ignore[no-untyped-def]
+    """对比模型与实际表结构，把缺的**可空**列用 ALTER TABLE ADD COLUMN 补上。"""
+    inspector = inspect(sync_conn)
+    preparer = sync_conn.dialect.identifier_preparer
+    added: list[tuple[str, str]] = []
+    for table in Base.metadata.sorted_tables:
+        if not inspector.has_table(table.name):
+            continue  # create_all 刚建的，本来就是全的
+        existing = {c["name"] for c in inspector.get_columns(table.name)}
+        for column in table.columns:
+            if column.name in existing:
+                continue
+            if not column.nullable:
+                # 非空列没法无损加到有数据的表上，必须走正式迁移。
+                # 只记错误不抛：抛了整个后端起不来（Docker 里表现为反复重启），
+                # 连不碰这张表的功能也一起挂掉
+                log.error(
+                    "%s.%s 是非空列，无法自动补到老数据库上，涉及它的读写会失败。"
+                    "请改成可空列或编写迁移",
+                    table.name,
+                    column.name,
+                )
+                continue
+            col_type = column.type.compile(dialect=sync_conn.dialect)
+            sync_conn.execute(
+                text(
+                    f"ALTER TABLE {preparer.quote(table.name)} "
+                    f"ADD COLUMN {preparer.quote(column.name)} {col_type}"
+                )
+            )
+            added.append((table.name, column.name))
+    return added
 
 
 async def dispose_db() -> None:

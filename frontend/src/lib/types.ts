@@ -4,6 +4,44 @@ export type Horizon = "短线" | "波段" | "中线";
 export type Signal = "看多" | "中性" | "看空";
 export type Action = "买入" | "加仓" | "持有" | "减仓" | "卖出" | "观望";
 export type Stage = "analysts" | "debate" | "risk" | "decision";
+/** 分析深度。后端按当前模型厂商翻译成辩论轮数、推理投入、模型 */
+export type Depth = "quick" | "standard" | "deep";
+
+/** 一次分析实际生效的参数（落库，回看时用来分清结论差异的来源） */
+export interface RunConfig {
+  depth: Depth;
+  depth_label: string;
+  provider: string;
+  debate_rounds: number;
+  llm_calls: number;
+  analyst_model?: string | null;
+  decision_model?: string | null;
+  /** 只有 Claude 有推理投入，其余厂商为 null */
+  analyst_effort?: string | null;
+  decision_effort?: string | null;
+  /** 用户手选的模型；null 表示按档位自动 */
+  model_override?: string | null;
+}
+
+export interface DepthOption {
+  value: Depth;
+  label: string;
+  blurb: string;
+  debate_rounds: number;
+  llm_calls: number;
+  /** 这一档在当前厂商下实际改了什么（后端生成，前端不写死） */
+  changes: string[];
+  config: RunConfig;
+}
+
+export interface AnalysisOptions {
+  provider: string;
+  default_depth: Depth;
+  depths: DepthOption[];
+  /** 可手选的模型（白名单）。少于 2 个时前端不显示选择器 */
+  models: { value: string; note: string }[];
+  notes: string[];
+}
 
 export interface StockBasic {
   symbol: string;
@@ -207,6 +245,8 @@ export interface Decision {
   dissent: string;
   data_quality: string;
   disclaimer: string;
+  /** 非空表示决策这一步换过模型重做 */
+  fallback_note?: string;
 }
 
 export interface AnalysisRun {
@@ -223,6 +263,8 @@ export interface AnalysisRun {
   data_warnings?: string[] | null;
   usage?: Record<string, number> | null;
   llm_provider: string;
+  /** 档位与模型。v14 之前的老记录为 null */
+  config?: RunConfig | null;
   elapsed_sec?: number | null;
   created_at?: string | null;
   finished_at?: string | null;
@@ -236,6 +278,7 @@ export interface AnalysisRunSummary {
   status: string;
   action?: string | null;
   conviction?: number | null;
+  depth?: Depth | null;
   created_at?: string | null;
   elapsed_sec?: number | null;
 }
@@ -264,6 +307,10 @@ export interface SystemStatus {
     model: string;
     analyst_model?: string | null;
     effort: string;
+    /** 兼容接口的推理模型（深度档的风控与决策用它） */
+    reasoning_model?: string | null;
+    /** 分析页能手选的模型 */
+    model_choices?: string[];
     is_stub: boolean;
   };
   data_providers: { name: string; healthy: boolean; capabilities: string[] }[];
@@ -280,7 +327,7 @@ export interface PipelineStage {
 }
 
 export type AnalysisEvent =
-  | { type: "run_start"; ts: number; run_id: string; symbol: string; name: string; horizon: string; as_of: string; data_sources: Record<string, string>; data_warnings: string[]; pipeline: PipelineStage[] }
+  | { type: "run_start"; ts: number; run_id: string; symbol: string; name: string; horizon: string; as_of: string; data_sources: Record<string, string>; data_warnings: string[]; pipeline: PipelineStage[]; config?: RunConfig }
   | { type: "stage_start"; ts: number; stage: Stage; label: string }
   | { type: "agent_start"; ts: number; agent: string; label: string; stage: Stage }
   | { type: "agent_delta"; ts: number; agent: string; text: string }

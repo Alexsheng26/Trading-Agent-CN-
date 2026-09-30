@@ -55,8 +55,8 @@ class _DebateAgent(LLMAgent):
     stage = "debate"
     max_tokens = 3500
 
-    def __init__(self, llm, model=None, round_no: int = 1) -> None:  # type: ignore[no-untyped-def]
-        super().__init__(llm, model)
+    def __init__(self, llm, model=None, round_no: int = 1, **overrides) -> None:  # type: ignore[no-untyped-def]
+        super().__init__(llm, model, **overrides)
         self.round_no = round_no
         # 每轮各自独立的 key，前端才能把多轮发言分开渲染
         self.key = f"{self.base_key}_r{round_no}"

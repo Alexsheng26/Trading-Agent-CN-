@@ -12,7 +12,14 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
-import type { AgentOutput, AnalysisEvent, Decision, PipelineStage, Stage } from "./types";
+import type {
+  AgentOutput,
+  AnalysisEvent,
+  Decision,
+  PipelineStage,
+  RunConfig,
+  Stage,
+} from "./types";
 
 export interface LiveAgent {
   key: string;
@@ -40,6 +47,8 @@ export interface StreamState {
   dataWarnings: string[];
   elapsedSec: number | null;
   usage: Record<string, number> | null;
+  /** 这次用的档位与模型 */
+  config: RunConfig | null;
   finished: boolean;
   error: string | null;
 }
@@ -57,9 +66,37 @@ const EMPTY: StreamState = {
   dataWarnings: [],
   elapsedSec: null,
   usage: null,
+  config: null,
   finished: false,
   error: null,
 };
+
+const STAGE_LABELS: Record<Stage, string> = {
+  analysts: "多维度分析",
+  debate: "多空辩论",
+  risk: "风险评估",
+  decision: "交易决策",
+};
+const STAGE_ORDER: Stage[] = ["analysts", "debate", "risk", "decision"];
+
+/**
+ * 从落库的产出反推流水线骨架。
+ *
+ * 骨架本来来自 run_start 事件，但那只在实时事件缓冲里。缓冲过期或
+ * 后端重启过之后打开历史记录，走的是 REST 轮询，拿不到 run_start ——
+ * 没有这一步的话页面只剩决策面板，各智能体的正文一张都不显示。
+ */
+function pipelineFromOutputs(outputs: AgentOutput[], hasDecision: boolean): PipelineStage[] {
+  const out: PipelineStage[] = [];
+  for (const stage of STAGE_ORDER) {
+    const agents = outputs
+      .filter((o) => o.stage === stage)
+      .map((o) => ({ key: o.key, label: o.label }));
+    if (stage === "decision" && hasDecision) agents.push({ key: "trader", label: "交易决策员" });
+    if (agents.length > 0) out.push({ stage, label: STAGE_LABELS[stage], agents });
+  }
+  return out;
+}
 
 /** 把一条事件叠加到当前状态上。纯函数，方便单独推理。 */
 function reduce(state: StreamState, event: AnalysisEvent): StreamState {
@@ -88,6 +125,7 @@ function reduce(state: StreamState, event: AnalysisEvent): StreamState {
         agents,
         dataSources: event.data_sources ?? {},
         dataWarnings: event.data_warnings ?? [],
+        config: event.config ?? state.config,
       };
     }
 
@@ -221,25 +259,34 @@ export function useAnalysisStream(runId: string | null) {
             };
           }
           const decision = run.decision ?? s.decision;
-          if (decision && agents["trader"]) {
+          if (decision) {
+            // 历史记录走这里时没有 run_start，决策员的卡片要自己补上
+            const prevTrader = agents["trader"] as LiveAgent | undefined;
             agents["trader"] = {
-              ...agents["trader"],
+              key: "trader",
+              label: prevTrader?.label ?? "交易决策员",
+              stage: "decision",
+              thinking: prevTrader?.thinking ?? "",
               status: "done",
               content: decision.summary || "决策已生成，详见上方决策面板。",
             };
           }
+          const pipeline =
+            s.pipeline.length > 0 ? s.pipeline : pipelineFromOutputs(run.outputs, Boolean(decision));
           const done = run.status === "done" || run.status === "error" || run.status === "cancelled";
           return {
             ...s,
             runId: run.id,
             symbol: run.symbol,
             name: run.name || s.name,
+            pipeline,
             agents,
             decision,
             dataSources: run.data_sources ?? s.dataSources,
             dataWarnings: run.data_warnings ?? s.dataWarnings,
             elapsedSec: run.elapsed_sec ?? s.elapsedSec,
             usage: run.usage ?? s.usage,
+            config: run.config ?? s.config,
             finished: done,
             error: run.error || s.error,
             connection: done ? "closed" : "polling",

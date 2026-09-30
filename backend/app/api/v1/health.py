@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from app.agents.profile import allowed_models
 from app.core.config import get_settings
 from app.core.version import APP_VERSION
 from app.data.base import ALL_CAPABILITIES
@@ -65,6 +66,13 @@ async def status() -> dict:
                 settings.analyst_model if settings.llm_provider == "anthropic" else None
             ),
             "effort": settings.llm_effort,
+            "reasoning_model": (
+                settings.openai_compat_reasoning_model.strip() or None
+                if settings.llm_provider == "openai_compat"
+                else None
+            ),
+            # 分析页"高级"里能手选的模型
+            "model_choices": allowed_models(settings),
             "is_stub": settings.llm_provider == "echo",
         },
         "data_providers": [p.model_dump() for p in providers],

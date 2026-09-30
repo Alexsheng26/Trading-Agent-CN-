@@ -88,12 +88,23 @@ class Settings(BaseSettings):
     openai_compat_base_url: str = "https://api.deepseek.com/v1"
     openai_compat_api_key: str = ""
     openai_compat_model: str = "deepseek-chat"
+    # 兼容接口没有 effort，"深度"档靠换推理模型来加码：配置后，深度档的
+    # 风控与决策两步会改用它。留空则深度档只多一轮辩论。
+    # 模型名以服务商文档为准（DeepSeek 目前是 deepseek-reasoner）。
+    openai_compat_reasoning_model: str = ""
+
+    # 分析页"高级"里可以手选的模型（逗号分隔）。已配置的主模型 /
+    # 分析师模型 / 推理模型会自动在列表里，这里只需写额外想用的。
+    # 只接受列表里的名字 —— 前端随手传的字符串不会被发给模型 API。
+    llm_model_choices: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     # ---------- 智能体流水线 ----------
+    # 这是"标准"档的轮数。快速档取 min(1, 它)，深度档取它 + 1
     debate_rounds: int = 2
+    # 标准档的整体超时（秒）。深度档自动放宽到 1.5 倍
     analysis_timeout: int = 600
 
-    @field_validator("cors_origins", "data_provider_order", mode="before")
+    @field_validator("cors_origins", "data_provider_order", "llm_model_choices", mode="before")
     @classmethod
     def _split_csv(cls, v: object) -> object:
         """支持 `A,B,C` 形式的环境变量写法（配合字段上的 NoDecode 生效）。"""
