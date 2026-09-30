@@ -9,6 +9,7 @@ import type {
   Bar,
   Depth,
   Diagnosis,
+  FundInfo,
   Indicators,
   IndexQuote,
   Quote,
@@ -75,6 +76,8 @@ export const api = {
     request<Bar[]>(`/market/bars/${encodeURIComponent(symbol)}?days=${days}`),
   indicators: (symbol: string) =>
     request<Indicators>(`/market/indicators/${encodeURIComponent(symbol)}`),
+  /** ETF 概况与重仓股。只对 ETF 有效，股票会返回 400 */
+  fund: (symbol: string) => request<FundInfo>(`/market/fund/${encodeURIComponent(symbol)}`),
   indexes: (signal?: AbortSignal) => request<IndexQuote[]>("/market/indexes", { signal }),
   /** 当前交易时段。前端据此决定要不要轮询 —— 收盘后刷价格毫无意义 */
   session: (signal?: AbortSignal) => request<SessionInfo>("/market/session", { signal }),

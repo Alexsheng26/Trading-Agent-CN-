@@ -8,6 +8,15 @@
     AKShare   600519          （多数接口用 6 位纯代码）
     东财 secid 1.600519        （AKShare 部分接口透传东财参数时用到）
     Baostock  sh.600519
+
+除了股票，也认场内 ETF（见 `ETF_PREFIXES`）：
+
+    沪市  51xxxx / 52xxxx / 56xxxx / 58xxxx   如 512480 半导体ETF
+    深市  159xxx                              如 159915 创业板ETF
+
+ETF 的代码写法和股票一样，但很多数据接口不通用（没有财报、估值；
+部分行情接口按"6 开头"判断沪市，会把 5 开头的沪市 ETF 当成深市），
+所以 `Symbol.asset_type` 要一路带到数据层和分析层。
 """
 
 from __future__ import annotations
@@ -19,11 +28,24 @@ from typing import Literal
 from app.core.errors import SymbolError
 
 Exchange = Literal["SH", "SZ", "BJ"]
+AssetType = Literal["stock", "etf"]
 
 _CLEAN_RE = re.compile(r"[^0-9A-Za-z]")
 
+#: 场内 ETF 的代码段。LOF（沪市 50、深市 16 开头）和封闭式基金不在其中 ——
+#: 它们的数据接口又是另一套，没接入之前宁可明确报"不支持"，也不要当成股票去查。
+ETF_PREFIXES: dict[str, tuple[str, ...]] = {
+    "SH": ("51", "52", "56", "58"),
+    "SZ": ("159",),
+}
+
 # 板块前缀 -> 交易所。按最长前缀优先匹配。
 _PREFIX_RULES: tuple[tuple[str, Exchange], ...] = (
+    ("51", "SH"),  # ETF
+    ("52", "SH"),
+    ("56", "SH"),
+    ("58", "SH"),  # 含科创板 ETF（588/589）
+    ("159", "SZ"),  # 深市 ETF
     ("920", "BJ"),  # 北交所新代码段
     ("688", "SH"),  # 科创板
     ("689", "SH"),  # 科创板 CDR
@@ -112,8 +134,30 @@ class Symbol:
         return f"{self.exchange.lower()}{self.code}"
 
     @property
+    def asset_type(self) -> AssetType:
+        """品种：股票还是 ETF。决定走哪套数据接口、简报怎么写。"""
+        if self.code.startswith(ETF_PREFIXES.get(self.exchange, ())):
+            return "etf"
+        return "stock"
+
+    @property
+    def is_etf(self) -> bool:
+        return self.asset_type == "etf"
+
+    @property
+    def price_decimals(self) -> int:
+        """价格精度。ETF 最小变动 0.001 元，股票 0.01 元。
+
+        ETF 价格常在 1 元上下，按两位小数显示的话 0.873 和 0.878 看起来一样，
+        支撑阻力位、止损价全都失真。
+        """
+        return 3 if self.is_etf else 2
+
+    @property
     def board(self) -> str:
         """所属板块中文名，用于给模型的上下文和前端展示。"""
+        if self.is_etf:
+            return "ETF"
         for prefix, name in _BOARD_NAMES:
             if self.code.startswith(prefix):
                 return name
@@ -125,7 +169,13 @@ class Symbol:
 
         注意：这里只覆盖常规交易日的普通股票。新股上市前 5 日、ST 股（±5%）、
         退市整理期等特殊情形需要结合实时数据另行判断。
+
+        ETF 跟随其跟踪的市场：科创板 ETF（588/589）±20%；创业板 ETF 也是 ±20%，
+        但它们和其他深市 ETF 共用 159 代码段，光看代码分不出来 ——
+        这里按 ±10% 给，简报里会另外写明这条规则让模型自己判断。
         """
+        if self.is_etf:
+            return 20.0 if self.code.startswith(("588", "589")) else 10.0
         if self.exchange == "BJ":
             return 30.0
         if self.code.startswith(("688", "689", "300", "301", "302")):
@@ -171,6 +221,10 @@ def normalize(raw: str) -> Symbol:
 
     inferred = _infer_exchange(code)
     if inferred is None:
+        if code.startswith(("50", "16")):
+            raise SymbolError(
+                f"{code} 看起来是 LOF 或封闭式基金，目前只支持股票和场内 ETF"
+            )
         raise SymbolError(
             f"无法从代码 {code} 推断交易所，"
             f"请显式写成 {code}.SH / {code}.SZ / {code}.BJ"

@@ -18,7 +18,7 @@ from datetime import date, datetime
 from typing import Any
 
 from app.core.clock import now_utc
-from app.core.errors import ProviderUnavailable
+from app.core.errors import CapabilityNotSupported, ProviderUnavailable
 from app.data.base import (
     CAP_BARS,
     CAP_BASIC,
@@ -117,6 +117,9 @@ class TushareProvider:
         return out
 
     async def stock_basic(self, symbol: Symbol) -> StockBasic:
+        if symbol.is_etf:
+            # stock_basic 只收录股票；基金在 fund_basic 里，那个接口还没接入
+            raise CapabilityNotSupported("Tushare 源暂未接入 ETF")
         df = await self._call(
             "stock_basic",
             ts_code=symbol.tushare,

@@ -72,6 +72,48 @@ export interface Quote {
   is_realtime?: boolean;
   /** 非实时时对应的交易日 */
   quote_date?: string | null;
+  /** stock | etf */
+  asset_type?: "stock" | "etf";
+  /** 价格小数位：股票 2，ETF 3（最小变动 0.001 元） */
+  price_decimals?: number;
+}
+
+/** ETF 概况。ETF 没有财报，这些就是它的"基本面" */
+export interface FundProfile {
+  symbol: string;
+  name: string;
+  full_name: string;
+  fund_type: string;
+  /** 跟踪标的 */
+  tracking_index: string;
+  benchmark: string;
+  manager: string;
+  inception_date?: string | null;
+  /** 资产规模（元） */
+  asset_size?: number | null;
+  asset_size_date?: string | null;
+  /** 份额规模（份） */
+  share_size?: number | null;
+  /** 管理费率 %/年 */
+  management_fee?: number | null;
+  custody_fee?: number | null;
+}
+
+export interface FundHolding {
+  code: string;
+  name: string;
+  /** 占净值比例 % */
+  weight_pct?: number | null;
+  /** 披露期，如 "2025年2季度" */
+  period: string;
+}
+
+export interface FundInfo {
+  symbol: string;
+  profile: FundProfile | null;
+  holdings: FundHolding[];
+  /** 部分失败时的说明（档案和重仓股各自取、各自失败） */
+  warnings: string[];
 }
 
 export interface Bar {
@@ -164,6 +206,8 @@ export interface SymbolIndexStatus {
   refreshing: boolean;
   /** 目录数据来自哪些数据源 */
   sources: string[];
+  /** 其中 ETF 有多少只。0 说明 ETF 列表还没拉成功，按名称搜不到 ETF */
+  etf_count?: number;
 }
 
 export interface InterfaceProbe {

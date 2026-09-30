@@ -210,7 +210,9 @@ class FibAnalysis:
     nearest_resistance: FibLevel | None = None
 
 
-def fib_analysis(bars: list[Bar], lookback: int = 60) -> FibAnalysis | None:
+def fib_analysis(
+    bars: list[Bar], lookback: int = 60, decimals: int = 2
+) -> FibAnalysis | None:
     """按最近 `lookback` 根 K 线的摆动区间计算斐波那契位。
 
     摆动点取法：窗口内的最高价与最低价。两者的**先后顺序**决定方向 ——
@@ -223,6 +225,9 @@ def fib_analysis(bars: list[Bar], lookback: int = 60) -> FibAnalysis | None:
     判断突破请用 60 日新高/新低相关字段。
 
     返回 None 的情况：K 线不足、或区间为零（连续一字板/长期停牌）。
+
+    `decimals` 是价位的小数位：股票 2 位，ETF 3 位（最小变动 0.001 元）——
+    1 元左右的 ETF 按两位小数算，相邻两条回撤位可能被舍入成同一个价。
     """
     if lookback <= 1:
         raise ValueError("lookback 必须大于 1")
@@ -247,26 +252,26 @@ def fib_analysis(bars: list[Bar], lookback: int = 60) -> FibAnalysis | None:
 
     # 摆动端点本身也是关键位，一并给出
     if uptrend:
-        levels.append(FibLevel(0.0, "0%（高点）", round(high, 2), "swing"))
+        levels.append(FibLevel(0.0, "0%（高点）", round(high, decimals), "swing"))
         levels += [
-            FibLevel(r, f"{r * 100:.1f}%", round(high - span * r, 2), "retracement")
+            FibLevel(r, f"{r * 100:.1f}%", round(high - span * r, decimals), "retracement")
             for r in _FIB_RETRACEMENTS
         ]
-        levels.append(FibLevel(1.0, "100%（低点）", round(low, 2), "swing"))
+        levels.append(FibLevel(1.0, "100%（低点）", round(low, decimals), "swing"))
         levels += [
-            FibLevel(r, f"{r * 100:.1f}%", round(low + span * r, 2), "extension")
+            FibLevel(r, f"{r * 100:.1f}%", round(low + span * r, decimals), "extension")
             for r in _FIB_EXTENSIONS
         ]
         retraced = (high - close) / span * 100
     else:
-        levels.append(FibLevel(0.0, "0%（低点）", round(low, 2), "swing"))
+        levels.append(FibLevel(0.0, "0%（低点）", round(low, decimals), "swing"))
         levels += [
-            FibLevel(r, f"{r * 100:.1f}%", round(low + span * r, 2), "retracement")
+            FibLevel(r, f"{r * 100:.1f}%", round(low + span * r, decimals), "retracement")
             for r in _FIB_RETRACEMENTS
         ]
-        levels.append(FibLevel(1.0, "100%（高点）", round(high, 2), "swing"))
+        levels.append(FibLevel(1.0, "100%（高点）", round(high, decimals), "swing"))
         levels += [
-            FibLevel(r, f"{r * 100:.1f}%", round(high - span * r, 2), "extension")
+            FibLevel(r, f"{r * 100:.1f}%", round(high - span * r, decimals), "extension")
             for r in _FIB_EXTENSIONS
         ]
         retraced = (close - low) / span * 100
@@ -276,8 +281,8 @@ def fib_analysis(bars: list[Bar], lookback: int = 60) -> FibAnalysis | None:
 
     return FibAnalysis(
         direction="上升" if uptrend else "下降",
-        swing_high=round(high, 2),
-        swing_low=round(low, 2),
+        swing_high=round(high, decimals),
+        swing_low=round(low, decimals),
         swing_high_date=window[hi_idx].date,
         swing_low_date=window[lo_idx].date,
         lookback=len(window),
@@ -328,8 +333,11 @@ class IndicatorSnapshot:
     patterns: list[str] = field(default_factory=list)
 
 
-def compute_snapshot(bars: list[Bar]) -> IndicatorSnapshot:
-    """算出最新一根 K 线的全部指标。bars 需按日期升序。"""
+def compute_snapshot(bars: list[Bar], price_decimals: int = 2) -> IndicatorSnapshot:
+    """算出最新一根 K 线的全部指标。bars 需按日期升序。
+
+    `price_decimals` 只影响斐波那契价位的舍入（ETF 传 3）。
+    """
     snap = IndicatorSnapshot()
     if not bars:
         return snap
@@ -371,7 +379,7 @@ def compute_snapshot(bars: list[Bar]) -> IndicatorSnapshot:
     if vol5 and vol20 and vol20 > 0:
         snap.volume_ratio_5_20 = round(vol5 / vol20, 2)
 
-    snap.fib = fib_analysis(bars)
+    snap.fib = fib_analysis(bars, decimals=price_decimals)
 
     snap.patterns = _detect_patterns(snap, closes, dif, dea)
     return snap

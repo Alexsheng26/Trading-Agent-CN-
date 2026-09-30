@@ -116,6 +116,35 @@ class MoneyFlow:
 
 
 @dataclass(slots=True)
+class FundProfile:
+    """ETF 概况。ETF 没有财报，这些才是它的"基本面"。"""
+
+    symbol: str
+    name: str = ""
+    full_name: str = ""
+    fund_type: str = ""  # 基金类型，如 "指数型-股票"
+    tracking_index: str = ""  # 跟踪标的
+    benchmark: str = ""  # 业绩比较基准
+    manager: str = ""  # 基金管理人
+    inception_date: date | None = None  # 成立日期
+    asset_size: float | None = None  # 资产规模（元）
+    asset_size_date: date | None = None  # 规模截止日期
+    share_size: float | None = None  # 份额规模（份）
+    management_fee: float | None = None  # 管理费率（%/年）
+    custody_fee: float | None = None  # 托管费率（%/年）
+
+
+@dataclass(slots=True)
+class FundHolding:
+    """ETF 的一只重仓股。"""
+
+    code: str
+    name: str
+    weight_pct: float | None = None  # 占净值比例 %
+    period: str = ""  # 披露期，如 "2025年2季度"
+
+
+@dataclass(slots=True)
 class IndexQuote:
     """大盘指数快照，用于给智能体提供市场环境。"""
 
@@ -137,6 +166,11 @@ class MarketSnapshot:
     news: list[NewsItem] = field(default_factory=list)
     money_flow: list[MoneyFlow] = field(default_factory=list)
     indexes: list[IndexQuote] = field(default_factory=list)
+    # 以下只对 ETF 有意义（股票为空）
+    fund_profile: FundProfile | None = None
+    holdings: list[FundHolding] = field(default_factory=list)
+    #: ETF 的新闻按板块关键词检索（按代码几乎搜不到东西），记下用的是哪个词
+    news_keyword: str = ""
     # 记录每个字段实际由哪个数据源提供，便于前端展示与排查降级
     sources: dict[str, str] = field(default_factory=dict)
     # 组装过程中失败但不致命的部分，前端可提示"该维度数据缺失"
@@ -154,6 +188,17 @@ CAP_NEWS = "news"
 CAP_MONEY_FLOW = "money_flow"
 CAP_INDEXES = "index_quotes"
 
+# ETF 单独成一组能力。同一个 `quote()` / `daily_bars()` 方法，股票和 ETF
+# 走的是不同能力标识 —— 因为"能取股票行情"不代表"能取 ETF 行情"：
+# 东财盘口接口按 6 开头判断沪市，5 开头的沪市 ETF 会被查成深市；
+# Tushare 的 daily 根本不含基金。按能力分开声明，registry 才不会把 ETF
+# 派给一个只会查股票的源，报错里也能如实写"未声明支持 ETF"。
+CAP_ETF_QUOTE = "etf_quote"
+CAP_ETF_BARS = "etf_bars"
+CAP_ETF_LIST = "etf_list"
+CAP_FUND_PROFILE = "fund_profile"
+CAP_FUND_HOLDINGS = "fund_holdings"
+
 ALL_CAPABILITIES = (
     CAP_SEARCH,
     CAP_BASIC,
@@ -163,6 +208,11 @@ ALL_CAPABILITIES = (
     CAP_NEWS,
     CAP_MONEY_FLOW,
     CAP_INDEXES,
+    CAP_ETF_QUOTE,
+    CAP_ETF_BARS,
+    CAP_ETF_LIST,
+    CAP_FUND_PROFILE,
+    CAP_FUND_HOLDINGS,
 )
 
 
@@ -191,7 +241,12 @@ class DataProvider(Protocol):
 
     async def stock_basic(self, symbol: Symbol) -> StockBasic: ...
 
-    async def quote(self, symbol: Symbol) -> Quote: ...
+    async def quote(self, symbol: Symbol) -> Quote:
+        """股票（CAP_QUOTE）和 ETF（CAP_ETF_QUOTE）共用。
+
+        只声明了 CAP_QUOTE 的源不会收到 ETF 代码，反之亦然。
+        """
+        ...
 
     async def daily_bars(
         self, symbol: Symbol, start: date, end: date, adjust: str = "qfq"
@@ -199,8 +254,22 @@ class DataProvider(Protocol):
 
     async def financials(self, symbol: Symbol, periods: int = 8) -> list[FinancialReport]: ...
 
-    async def news(self, symbol: Symbol, limit: int = 20) -> list[NewsItem]: ...
+    async def news(
+        self, symbol: Symbol, limit: int = 20, keyword: str | None = None
+    ) -> list[NewsItem]:
+        """`keyword` 非空时按关键词搜（ETF 用板块词，按代码搜几乎没有结果）。"""
+        ...
 
     async def money_flow(self, symbol: Symbol, days: int = 10) -> list[MoneyFlow]: ...
 
     async def index_quotes(self) -> list[IndexQuote]: ...
+
+    async def etf_list(self) -> list[StockBasic]:
+        """全部场内 ETF 的代码和名称，建本地代码目录用。"""
+        ...
+
+    async def fund_profile(self, symbol: Symbol) -> FundProfile: ...
+
+    async def fund_holdings(self, symbol: Symbol) -> list[FundHolding]:
+        """最近一期披露的重仓股，按占净值比例降序。"""
+        ...

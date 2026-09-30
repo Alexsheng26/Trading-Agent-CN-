@@ -18,6 +18,7 @@ import {
   fmtSigned,
   phaseColor,
 } from "@/lib/format";
+import { priceDecimals } from "@/lib/symbols";
 import type { Quote, SessionInfo } from "@/lib/types";
 
 interface Props {
@@ -34,6 +35,8 @@ export function LivePrice({ symbol, fallbackName, live, children }: Props) {
 
   const change = changeAmount(quote);
   const color = changeColor(quote?.change_pct);
+  // ETF 三位小数：两位的话 0.873 和 0.878 看起来一样
+  const digits = priceDecimals(symbol, quote);
   // seq 变一次就重放一次动画：靠 key 强制 React 重建节点，不然动画只播第一次
   const flash = tick.seq > 0 ? (tick.dir > 0 ? "flash-up" : "flash-down") : "";
 
@@ -59,10 +62,10 @@ export function LivePrice({ symbol, fallbackName, live, children }: Props) {
           <div className="flex flex-wrap items-baseline gap-x-3">
             {/* 大号独立数字用比例字体：等宽在这个字号下显得松散 */}
             <span className={`text-[2.25rem] font-semibold leading-none ${color}`}>
-              {quote ? fmtNum(quote.price) : "—"}
+              {quote ? fmtNum(quote.price, digits) : "—"}
             </span>
             <span className={`tabular text-base font-medium ${color}`}>
-              {fmtSigned(change)}
+              {fmtSigned(change, digits)}
             </span>
             <span className={`tabular text-base font-medium ${color}`}>
               {fmtPct(quote?.change_pct)}
@@ -72,10 +75,10 @@ export function LivePrice({ symbol, fallbackName, live, children }: Props) {
 
         {/* ---- 开高低收 ---- */}
         <dl className="grid shrink-0 grid-cols-4 gap-x-4 gap-y-1 text-[11px] md:gap-x-5">
-          <Field label="今开" value={fmtNum(quote?.open)} base={quote?.prev_close} raw={quote?.open} />
-          <Field label="最高" value={fmtNum(quote?.high)} base={quote?.prev_close} raw={quote?.high} />
-          <Field label="最低" value={fmtNum(quote?.low)} base={quote?.prev_close} raw={quote?.low} />
-          <Field label="昨收" value={fmtNum(quote?.prev_close)} />
+          <Field label="今开" value={fmtNum(quote?.open, digits)} base={quote?.prev_close} raw={quote?.open} />
+          <Field label="最高" value={fmtNum(quote?.high, digits)} base={quote?.prev_close} raw={quote?.high} />
+          <Field label="最低" value={fmtNum(quote?.low, digits)} base={quote?.prev_close} raw={quote?.low} />
+          <Field label="昨收" value={fmtNum(quote?.prev_close, digits)} />
         </dl>
       </div>
 
@@ -194,9 +197,12 @@ export function SessionBadge({
  */
 export function TickPrice({
   value,
+  digits = 2,
   className = "",
 }: {
   value?: number | null;
+  /** 小数位：ETF 传 3 */
+  digits?: number;
   className?: string;
 }) {
   const [state, setState] = useState<{ dir: 1 | 0 | -1; seq: number }>({ dir: 0, seq: 0 });
@@ -212,7 +218,7 @@ export function TickPrice({
   const flash = state.seq > 0 ? (state.dir > 0 ? "flash-up" : "flash-down") : "";
   return (
     <span key={state.seq} className={`tabular inline-block rounded px-1 ${flash} ${className}`}>
-      {fmtNum(value)}
+      {fmtNum(value, digits)}
     </span>
   );
 }

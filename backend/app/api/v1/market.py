@@ -131,7 +131,7 @@ async def quote(symbol: str) -> QuoteOut:
         q = await quote_with_fallback(get_registry(), sym)
     except DataNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return QuoteOut(**{k: v for k, v in asdict(q).items() if k != "volume"})
+    return QuoteOut.from_quote(q)
 
 
 @router.get("/bars/{symbol}", response_model=list[BarOut], summary="日线K线")
@@ -171,7 +171,7 @@ async def indicators(symbol: str) -> IndicatorsOut:
         rows = await get_registry().daily_bars(sym, end - timedelta(days=500), end)
     except DataNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return IndicatorsOut(**asdict(compute_snapshot(rows)))
+    return IndicatorsOut(**asdict(compute_snapshot(rows, price_decimals=sym.price_decimals)))
 
 
 @router.get("/indexes", response_model=list[IndexQuoteOut], summary="大盘指数")
@@ -192,9 +192,10 @@ async def snapshot(symbol: str) -> dict:
     except DataNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    ind = compute_snapshot(snap.bars)
+    ind = compute_snapshot(snap.bars, price_decimals=sym.price_decimals)
     return {
         "symbol": sym.canonical,
+        "asset_type": sym.asset_type,
         "board": sym.board,
         "price_limit_pct": sym.price_limit_pct,
         "basic": asdict(snap.basic) if snap.basic else None,
@@ -205,8 +206,32 @@ async def snapshot(symbol: str) -> dict:
         "news": [asdict(n) for n in snap.news],
         "money_flow": [asdict(m) for m in snap.money_flow],
         "indexes": [asdict(i) for i in snap.indexes],
+        "fund_profile": asdict(snap.fund_profile) if snap.fund_profile else None,
+        "holdings": [asdict(h) for h in snap.holdings],
+        "news_keyword": snap.news_keyword,
         "sources": snap.sources,
         "warnings": snap.warnings,
+    }
+
+
+@router.get("/fund/{symbol}", summary="ETF 概况与重仓股")
+async def fund(symbol: str) -> dict:
+    """ETF 详情页的"基本面"：跟踪标的、规模、费率、前十大重仓股。
+
+    两部分各自取、各自失败：档案拿不到不影响重仓股，反之亦然。
+    都拿不到才报错。
+    """
+    sym = _symbol(symbol)
+    if not sym.is_etf:
+        raise HTTPException(status_code=400, detail=f"{sym.canonical} 不是 ETF")
+    profile, holdings, warnings = await MarketDataService().fund_info(sym)
+    if profile is None and not holdings:
+        raise HTTPException(status_code=503, detail="；".join(warnings) or "取不到 ETF 数据")
+    return {
+        "symbol": sym.canonical,
+        "profile": asdict(profile) if profile else None,
+        "holdings": [asdict(h) for h in holdings],
+        "warnings": warnings,
     }
 
 
@@ -265,9 +290,7 @@ async def quotes(
     if not quotes and failures:
         raise HTTPException(status_code=503, detail=failures[0])
 
-    return [
-        QuoteOut(**{k: v for k, v in asdict(q).items() if k != "volume"}) for q in quotes
-    ]
+    return [QuoteOut.from_quote(q) for q in quotes]
 
 
 @router.get("/diagnose", summary="数据源逐接口探测")
@@ -283,6 +306,10 @@ async def diagnose() -> dict:
     """
     from app.data.base import (  # noqa: PLC0415
         CAP_BARS,
+        CAP_ETF_BARS,
+        CAP_ETF_QUOTE,
+        CAP_FUND_HOLDINGS,
+        CAP_FUND_PROFILE,
         CAP_INDEXES,
         CAP_NEWS,
         CAP_QUOTE,
@@ -291,6 +318,9 @@ async def diagnose() -> dict:
 
     registry = get_registry()
     probe_symbol = normalize("600519")
+    # 沪市 ETF 专门挑出来测：东财盘口接口会把 5 开头的代码查成深市，
+    # 用户关心的 512480 / 512400 正好都是沪市
+    probe_etf = normalize("512480")
     end = date.today()
 
     probes: dict[str, tuple[str, object]] = {
@@ -299,6 +329,13 @@ async def diagnose() -> dict:
         CAP_BARS: ("日线", lambda p: p.daily_bars(probe_symbol, end - timedelta(days=10), end)),
         CAP_NEWS: ("新闻", lambda p: p.news(probe_symbol, 1)),
         CAP_INDEXES: ("大盘指数", lambda p: p.index_quotes()),
+        CAP_ETF_QUOTE: ("ETF 行情", lambda p: p.quote(probe_etf)),
+        CAP_ETF_BARS: (
+            "ETF 日线",
+            lambda p: p.daily_bars(probe_etf, end - timedelta(days=10), end),
+        ),
+        CAP_FUND_PROFILE: ("ETF 概况", lambda p: p.fund_profile(probe_etf)),
+        CAP_FUND_HOLDINGS: ("ETF 持仓", lambda p: p.fund_holdings(probe_etf)),
     }
 
     out: list[dict] = []

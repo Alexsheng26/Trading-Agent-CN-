@@ -7,6 +7,7 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { AgentCard } from "@/components/AgentCard";
 import { DecisionPanel } from "@/components/DecisionPanel";
 import { DepthPicker, RunConfigLine } from "@/components/DepthPicker";
+import { EtfPanel } from "@/components/EtfPanel";
 import { FibPanel } from "@/components/FibPanel";
 import { LivePrice } from "@/components/LivePrice";
 import { PriceChart } from "@/components/PriceChart";
@@ -16,9 +17,17 @@ import { StatRow, StatTile } from "@/components/StatTile";
 import { StockSearch } from "@/components/StockSearch";
 import { api } from "@/lib/api";
 import { fmtMoney, fmtNum, fmtPct } from "@/lib/format";
+import { isEtfSymbol, priceDecimals } from "@/lib/symbols";
 import { useAnalysisStream } from "@/lib/useAnalysisStream";
 import { useLiveQuote } from "@/lib/useLiveQuote";
-import type { AnalysisOptions, Bar, Depth, Horizon, Indicators } from "@/lib/types";
+import type {
+  AnalysisOptions,
+  Bar,
+  Depth,
+  FundInfo,
+  Horizon,
+  Indicators,
+} from "@/lib/types";
 
 // 记住上次选的档位（只是本机的便利，读写失败就用默认值）
 const DEPTH_KEY = "analyze.depth";
@@ -74,6 +83,11 @@ function AnalyzeInner() {
 
   const [bars, setBars] = useState<Bar[]>([]);
   const [indicators, setIndicators] = useState<Indicators | null>(null);
+  // ETF 概况与重仓股（只有 ETF 才拉）
+  const [fund, setFund] = useState<FundInfo | null>(null);
+  const [fundLoading, setFundLoading] = useState(false);
+  const [fundError, setFundError] = useState<string | null>(null);
+  const isEtf = isEtfSymbol(symbol);
 
   // 价格单独走实时轮询；K线和指标是日线级别的，没必要跟着刷
   const live = useLiveQuote(symbol);
@@ -128,6 +142,22 @@ function AnalyzeInner() {
     };
   }, [symbol]);
 
+  useEffect(() => {
+    setFund(null);
+    setFundError(null);
+    if (!symbol || !isEtf) return;
+    let alive = true;
+    setFundLoading(true);
+    api
+      .fund(symbol)
+      .then((f) => alive && setFund(f))
+      .catch((e) => alive && setFundError(e instanceof Error ? e.message : "取不到 ETF 概况"))
+      .finally(() => alive && setFundLoading(false));
+    return () => {
+      alive = false;
+    };
+  }, [symbol, isEtf]);
+
   const start = useCallback(async () => {
     if (!symbol) return;
     setStarting(true);
@@ -147,9 +177,10 @@ function AnalyzeInner() {
   if (!symbol) {
     return (
       <div className="mx-auto w-full max-w-2xl px-4 py-6 md:px-6">
-        <h1 className="mb-1 text-lg font-semibold">分析一只股票</h1>
+        <h1 className="mb-1 text-lg font-semibold">分析一只股票或 ETF</h1>
         <p className="mb-4 text-sm text-[var(--muted)]">
           7 个智能体会分别从基本面、技术面、消息面、资金面分析，再经多空辩论和风控，最后给出决策。
+          ETF 的基本面看的是跟踪指数和重仓股。
         </p>
         <StockSearch
           autoFocus
@@ -161,6 +192,8 @@ function AnalyzeInner() {
 
   const stageOrder = stream.pipeline.length > 0 ? stream.pipeline : null;
   const running = runId !== null && !stream.finished;
+  // ETF 三位小数（最小变动 0.001 元）
+  const digits = priceDecimals(symbol, quote);
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-4 md:px-6 md:py-6">
@@ -179,7 +212,12 @@ function AnalyzeInner() {
           <StatRow>
             <StatTile label="成交额" value={fmtMoney(quote?.amount)} />
             <StatTile label="换手率" value={fmtPct(quote?.turnover_rate, false)} />
-            <StatTile label="市盈率 TTM" value={fmtNum(quote?.pe_ttm)} />
+            {isEtf ? (
+              // ETF 没有市盈率；规模是它最常被问到的一个数（太小有清盘风险）
+              <StatTile label="规模" value={fmtMoney(fund?.profile?.asset_size)} />
+            ) : (
+              <StatTile label="市盈率 TTM" value={fmtNum(quote?.pe_ttm)} />
+            )}
             <StatTile
               label="20 日涨幅"
               value={fmtPct(indicators?.return_20d)}
@@ -199,7 +237,7 @@ function AnalyzeInner() {
         </div>
       )}
 
-      <PriceChart bars={bars} fib={indicators?.fib} showFib={showFib} />
+      <PriceChart bars={bars} fib={indicators?.fib} showFib={showFib} decimals={digits} />
 
       {indicators?.fib && (
         <div className="mt-3">
@@ -208,6 +246,7 @@ function AnalyzeInner() {
             close={quote?.price ?? indicators.close}
             enabled={showFib}
             onToggle={() => setShowFib((v) => !v)}
+            decimals={digits}
           />
         </div>
       )}
@@ -222,6 +261,12 @@ function AnalyzeInner() {
               {p}
             </span>
           ))}
+        </div>
+      )}
+
+      {isEtf && (
+        <div className="mt-3">
+          <EtfPanel info={fund} loading={fundLoading} error={fundError} />
         </div>
       )}
 

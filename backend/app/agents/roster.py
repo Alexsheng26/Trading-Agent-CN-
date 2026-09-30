@@ -9,6 +9,7 @@ from app.agents.prompts import (
     BULL_RESEARCHER,
     CAPITAL_ANALYST,
     FUNDAMENTAL_ANALYST,
+    FUNDAMENTAL_ANALYST_ETF,
     NEWS_ANALYST,
     RISK_MANAGER,
     TECHNICAL_ANALYST,
@@ -22,6 +23,10 @@ class FundamentalAnalyst(LLMAgent):
     label = "基本面分析师"
     stage = "analysts"
     role_prompt = FUNDAMENTAL_ANALYST
+
+    def role_prompt_for(self, ctx: AnalysisContext) -> str:
+        # ETF 没有财报：让它分析跟踪指数和持仓，而不是对着"财务数据缺失"干瞪眼
+        return FUNDAMENTAL_ANALYST_ETF if ctx.is_etf else FUNDAMENTAL_ANALYST
 
 
 class TechnicalAnalyst(LLMAgent):

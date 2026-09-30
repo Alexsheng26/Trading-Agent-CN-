@@ -9,7 +9,7 @@ import type { StockBasic } from "@/lib/types";
 
 export function StockSearch({
   onPick,
-  placeholder = "输入代码或名称，如 600519 / 茅台",
+  placeholder = "输入代码或名称，如 600519 / 茅台 / 512480",
   autoFocus = false,
 }: {
   onPick: (stock: StockBasic) => void;

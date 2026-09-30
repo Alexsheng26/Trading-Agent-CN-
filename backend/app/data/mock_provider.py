@@ -13,10 +13,13 @@ import random
 from datetime import date, timedelta
 
 from app.core.clock import now_utc
+from app.core.errors import CapabilityNotSupported
 from app.data.base import (
     ALL_CAPABILITIES,
     Bar,
     FinancialReport,
+    FundHolding,
+    FundProfile,
     IndexQuote,
     MoneyFlow,
     NewsItem,
@@ -37,6 +40,30 @@ _KNOWN: dict[str, tuple[str, str]] = {
     "600036": ("招商银行", "股份制银行"),
 }
 
+# 几只常见 ETF：名称、跟踪标的
+_KNOWN_ETF: dict[str, tuple[str, str]] = {
+    "512480": ("半导体ETF", "中证全指半导体产品与设备指数"),
+    "512400": ("有色金属ETF", "中证申万有色金属指数"),
+    "510300": ("沪深300ETF", "沪深300指数"),
+    "159915": ("创业板ETF", "创业板指数"),
+    "518880": ("黄金ETF", "上海黄金交易所 Au99.99 现货合约"),
+}
+
+# 模拟持仓用的成分股池
+_HOLDING_POOL = (
+    ("688981", "中芯国际"),
+    ("603501", "韦尔股份"),
+    ("002371", "北方华创"),
+    ("688012", "中微公司"),
+    ("603986", "兆易创新"),
+    ("688008", "澜起科技"),
+    ("600584", "长电科技"),
+    ("688256", "寒武纪"),
+    ("300661", "圣邦股份"),
+    ("002049", "紫光国微"),
+    ("688126", "沪硅产业"),
+)
+
 
 class MockProvider:
     name = "mock"
@@ -51,13 +78,20 @@ class MockProvider:
         return random.Random(f"{symbol.canonical}:{salt}")
 
     def _name(self, symbol: Symbol) -> str:
+        if symbol.is_etf:
+            return _KNOWN_ETF.get(symbol.code, (f"模拟ETF{symbol.code[-3:]}", ""))[0]
         return _KNOWN.get(symbol.code, (f"模拟股份{symbol.code[-3:]}", "综合"))[0]
 
     def _industry(self, symbol: Symbol) -> str:
+        if symbol.is_etf:
+            return _KNOWN_ETF.get(symbol.code, ("", "模拟指数"))[1]
         return _KNOWN.get(symbol.code, ("", "综合"))[1]
 
     def _base_price(self, symbol: Symbol) -> float:
         rng = self._rng(symbol, "price")
+        if symbol.is_etf:
+            # ETF 净值通常在 1 元上下，价格精确到厘
+            return round(rng.uniform(0.6, 4.5), 3)
         return round(rng.uniform(8, 180), 2)
 
     # ---------------- 接口实现 ----------------
@@ -65,7 +99,7 @@ class MockProvider:
     async def search(self, keyword: str, limit: int = 20) -> list[StockBasic]:
         keyword = keyword.strip()
         hits: list[StockBasic] = []
-        for code, (name, industry) in _KNOWN.items():
+        for code, (name, industry) in {**_KNOWN, **_KNOWN_ETF}.items():
             if keyword in code or keyword in name:
                 sym = normalize(code)
                 hits.append(
@@ -98,6 +132,7 @@ class MockProvider:
         prev = bars[-2].close if len(bars) > 1 else last.close
         rng = self._rng(symbol, "quote")
         shares = rng.uniform(5e8, 2e10)
+        etf = symbol.is_etf
         return Quote(
             symbol=symbol.canonical,
             name=self._name(symbol),
@@ -110,10 +145,11 @@ class MockProvider:
             volume=last.volume,
             amount=last.amount,
             turnover_rate=round(rng.uniform(0.3, 6.0), 2),
-            pe_ttm=round(rng.uniform(8, 60), 2),
-            pb=round(rng.uniform(0.8, 12), 2),
-            total_market_cap=last.close * shares,
-            float_market_cap=last.close * shares * 0.8,
+            # ETF 没有估值和市值的概念
+            pe_ttm=None if etf else round(rng.uniform(8, 60), 2),
+            pb=None if etf else round(rng.uniform(0.8, 12), 2),
+            total_market_cap=None if etf else last.close * shares,
+            float_market_cap=None if etf else last.close * shares * 0.8,
             updated_at=now_utc(),
         )
 
@@ -130,6 +166,7 @@ class MockProvider:
     def _full_walk(self, symbol: Symbol, end: date) -> list[Bar]:
         """从固定锚点走到 `end`，结果只取决于 (symbol, end)。"""
         rng = self._rng(symbol, "bars")
+        digits = symbol.price_decimals
         drift = rng.uniform(-0.0012, 0.0018)
         vol = rng.uniform(0.014, 0.032)
         limit = symbol.price_limit_pct / 100
@@ -146,10 +183,10 @@ class MockProvider:
             # 加一点周期成分，让均线有交叉，技术面分析师才有东西可说
             shock += 0.004 * math.sin(len(bars) / 9.0)
             shock = max(-limit * 0.95, min(limit * 0.95, shock))
-            close = round(prev_close * (1 + shock), 2)
-            open_ = round(prev_close * (1 + rng.gauss(0, vol / 3)), 2)
-            high = round(max(open_, close) * (1 + abs(rng.gauss(0, vol / 4))), 2)
-            low = round(min(open_, close) * (1 - abs(rng.gauss(0, vol / 4))), 2)
+            close = round(prev_close * (1 + shock), digits)
+            open_ = round(prev_close * (1 + rng.gauss(0, vol / 3)), digits)
+            high = round(max(open_, close) * (1 + abs(rng.gauss(0, vol / 4))), digits)
+            low = round(min(open_, close) * (1 - abs(rng.gauss(0, vol / 4))), digits)
             volume = round(rng.uniform(3e5, 9e6), 0)
             bars.append(
                 Bar(
@@ -169,6 +206,8 @@ class MockProvider:
         return bars
 
     async def financials(self, symbol: Symbol, periods: int = 8) -> list[FinancialReport]:
+        if symbol.is_etf:
+            raise CapabilityNotSupported("ETF 没有财报")
         rng = self._rng(symbol, "fin")
         reports: list[FinancialReport] = []
         revenue = rng.uniform(2e9, 8e10)
@@ -199,9 +238,12 @@ class MockProvider:
             )
         return reports
 
-    async def news(self, symbol: Symbol, limit: int = 20) -> list[NewsItem]:
+    async def news(
+        self, symbol: Symbol, limit: int = 20, keyword: str | None = None
+    ) -> list[NewsItem]:
         rng = self._rng(symbol, "news")
-        name = self._name(symbol)
+        # 按关键词搜时（ETF），模板里的主语换成关键词，看起来像板块新闻
+        name = keyword or self._name(symbol)
         templates = [
             f"{name}发布半年度业绩预告，净利润同比预增",
             f"机构调研｜多家公募近期集中调研{name}",
@@ -261,6 +303,53 @@ class MockProvider:
                 change_pct=round(rng.gauss(0, 0.9), 2),
             )
             for code, name, base in specs
+        ]
+
+
+    # ---------------- ETF ----------------
+
+    async def etf_list(self) -> list[StockBasic]:
+        out: list[StockBasic] = []
+        for code, (name, _index) in _KNOWN_ETF.items():
+            sym = normalize(code)
+            out.append(
+                StockBasic(symbol=sym.canonical, name=name, exchange=sym.exchange, board=sym.board)
+            )
+        return out
+
+    async def fund_profile(self, symbol: Symbol) -> FundProfile:
+        if not symbol.is_etf:
+            raise CapabilityNotSupported(f"{symbol.canonical} 不是 ETF")
+        rng = self._rng(symbol, "fund")
+        index = self._industry(symbol)
+        return FundProfile(
+            symbol=symbol.canonical,
+            name=self._name(symbol),
+            full_name=f"模拟{index}交易型开放式指数证券投资基金",
+            fund_type="指数型-股票",
+            tracking_index=index,
+            benchmark=f"{index}收益率",
+            manager="模拟基金管理有限公司",
+            inception_date=date(2015, 1, 1) + timedelta(days=rng.randint(0, 2500)),
+            asset_size=round(rng.uniform(5e8, 3e10), 0),
+            asset_size_date=_previous_report_period(date.today(), 0),
+            share_size=round(rng.uniform(3e8, 2e10), 0),
+            management_fee=0.5,
+            custody_fee=0.1,
+        )
+
+    async def fund_holdings(self, symbol: Symbol) -> list[FundHolding]:
+        if not symbol.is_etf:
+            raise CapabilityNotSupported(f"{symbol.canonical} 不是 ETF")
+        rng = self._rng(symbol, "holdings")
+        pool = list(_HOLDING_POOL)
+        rng.shuffle(pool)
+        period_end = _previous_report_period(date.today(), 0)
+        period = f"{period_end.year}年{(period_end.month - 1) // 3 + 1}季度"
+        weights = sorted((round(rng.uniform(2.5, 12.0), 2) for _ in range(10)), reverse=True)
+        return [
+            FundHolding(code=code, name=name, weight_pct=w, period=period)
+            for (code, name), w in zip(pool[:10], weights, strict=True)
         ]
 
 

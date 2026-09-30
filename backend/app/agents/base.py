@@ -88,6 +88,10 @@ class LLMAgent:
 
     # ------------------------------------------------------------ 可覆写
 
+    def role_prompt_for(self, ctx: AnalysisContext) -> str:
+        """按标的挑角色提示词。默认一套通用；需要区分股票 / ETF 的角色覆写它。"""
+        return self.role_prompt
+
     def user_message(self, ctx: AnalysisContext, board: dict[str, AgentOutput]) -> str:
         """构造用户轮内容。`board` 是此前所有智能体的产出。"""
         parts = [f"请分析 {ctx.display_name}（{ctx.symbol.canonical}）。"]
@@ -101,7 +105,7 @@ class LLMAgent:
         self, ctx: AnalysisContext, board: dict[str, AgentOutput]
     ) -> AsyncIterator[StreamChunk | AgentOutput]:
         """流式执行：先吐出若干 `StreamChunk`，最后吐出一个 `AgentOutput`。"""
-        system_blocks = [ctx.market_brief(), with_discipline(self.role_prompt)]
+        system_blocks = [ctx.market_brief(), with_discipline(self.role_prompt_for(ctx))]
         messages = [Message(role="user", content=self.user_message(ctx, board))]
 
         text_parts: list[str] = []

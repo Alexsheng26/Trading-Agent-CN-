@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
@@ -17,6 +16,7 @@ from app.db.models import WatchlistItem
 from app.db.session import get_session
 from app.schemas.market import QuoteOut
 from app.schemas.watchlist import WatchlistCreate, WatchlistItemOut, WatchlistUpdate
+from app.services import symbol_index
 from app.services.quote_source import quote_with_fallback
 
 log = logging.getLogger(__name__)
@@ -71,7 +71,7 @@ async def _safe_quote(symbol: str) -> QuoteOut | None:
     except (DataNotFound, SymbolError) as exc:
         log.info("自选股 %s 行情获取失败：%s", symbol, exc)
         return None
-    return QuoteOut(**{k: v for k, v in asdict(q).items() if k != "volume"})
+    return QuoteOut.from_quote(q)
 
 
 @router.post("", response_model=WatchlistItemOut, status_code=201, summary="加入自选")
@@ -91,13 +91,16 @@ async def add_item(
     if existing is not None:
         raise HTTPException(status_code=409, detail=f"{symbol.canonical} 已在自选股中")
 
-    # 取个名字存下来，列表页离线也能显示
-    name = ""
-    try:
-        basic = await get_registry().stock_basic(symbol)
-        name = basic.name
-    except (DataNotFound, SymbolError) as exc:
-        log.info("取 %s 名称失败，先留空：%s", symbol.canonical, exc)
+    # 取个名字存下来，列表页离线也能显示。
+    # 先查本地代码目录：不走网络，而且 ETF 在那里是交易所简称（"半导体ETF"），
+    # 基金档案里的是"国联安中证全指半导体ETF"这种长名字
+    name = await symbol_index.name_of(symbol.canonical)
+    if not name:
+        try:
+            basic = await get_registry().stock_basic(symbol)
+            name = basic.name
+        except (DataNotFound, SymbolError) as exc:
+            log.info("取 %s 名称失败，先留空：%s", symbol.canonical, exc)
 
     item = WatchlistItem(
         symbol=symbol.canonical,

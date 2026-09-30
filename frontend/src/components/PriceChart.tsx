@@ -11,12 +11,15 @@ export function PriceChart({
   fib,
   showFib = false,
   height = 260,
+  decimals = 2,
 }: {
   bars: Bar[];
   fib?: FibAnalysis | null;
   /** 是否在图上叠加斐波那契价位线 */
   showFib?: boolean;
   height?: number;
+  /** 价格小数位：ETF 传 3，否则坐标轴和价位线会把 0.873 显示成 0.87 */
+  decimals?: number;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -61,6 +64,7 @@ export function PriceChart({
       });
 
       const candles = chart.addSeries(CandlestickSeries, {
+        priceFormat: { type: "price", precision: decimals, minMove: 10 ** -decimals },
         upColor: up,
         downColor: down,
         borderUpColor: up,
@@ -143,7 +147,7 @@ export function PriceChart({
       disposed = true;
       cleanup?.();
     };
-  }, [bars, height, fib, showFib]);
+  }, [bars, height, fib, showFib, decimals]);
 
   if (bars.length === 0) {
     return (

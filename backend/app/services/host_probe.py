@@ -33,13 +33,15 @@ _TIMEOUT = 6.0
 #: 主机 -> 谁在用它。顺序即展示顺序。
 HOSTS: tuple[tuple[str, str], ...] = (
     ("push2.eastmoney.com", "东财-实时行情"),
-    ("push2his.eastmoney.com", "东财-日线"),
+    ("push2his.eastmoney.com", "东财-日线（含 ETF）"),
     ("82.push2.eastmoney.com", "东财-全市场列表"),
-    ("search-api-web.eastmoney.com", "东财-个股新闻"),
+    ("push2delay.eastmoney.com", "东财-ETF 列表"),
+    ("fundf10.eastmoney.com", "天天基金-ETF 概况/持仓"),
+    ("search-api-web.eastmoney.com", "东财-新闻"),
     ("xueqiu.com", "雪球-实时行情（需 token）"),
     ("stock.xueqiu.com", "雪球-行情接口"),
-    ("finance.sina.com.cn", "新浪-日线"),
-    ("vip.stock.finance.sina.com.cn", "新浪-大盘指数"),
+    ("finance.sina.com.cn", "新浪-日线（含 ETF）"),
+    ("vip.stock.finance.sina.com.cn", "新浪-大盘指数 / ETF 行情"),
     ("api.tushare.pro", "Tushare"),
 )
 

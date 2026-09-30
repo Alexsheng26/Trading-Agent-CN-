@@ -148,6 +148,7 @@ export function DiagnosePanel() {
           ))}
 
           <Advice result={result} />
+          <EtfAdvice result={result} />
         </div>
       )}
     </div>
@@ -330,6 +331,59 @@ function Advice({ result }: { result: Diagnosis }) {
     );
   }
   return <Tip tone="ok">全部接口正常，行情数据是真实的。</Tip>;
+}
+
+/** ETF 单独给一句结论：它的数据来源和股票不一样，混在一起说会让人看不懂。 */
+function EtfAdvice({ result }: { result: Diagnosis }) {
+  const real = result.providers.filter((p) => p.provider !== "mock");
+  const ok = new Set<string>();
+  let probed = false;
+  for (const p of real) {
+    for (const i of p.interfaces) {
+      if (i.name.startsWith("ETF")) probed = true;
+      if (i.status === "正常") ok.add(i.name);
+    }
+  }
+  if (!probed) return null; // 老版本后端没有 ETF 探测
+
+  const missingCore = ["ETF 行情", "ETF 日线"].filter((n) => !ok.has(n));
+  const missingExtra = ["ETF 概况", "ETF 持仓"].filter((n) => !ok.has(n));
+  // 东财盘口接口会把沪市 ETF（5 开头）查成深市，akshare 那一行必然失败 —— 这是预期的
+  const expectedNote = (
+    <>
+      akshare 那一行的「ETF 行情」失败是<strong>预期的</strong>：
+      {"东财的盘口接口按「6 开头」判断沪市，会把 512480 这类沪市 ETF 查成深市，所以直接跳过，"}
+      {"ETF 实时价由新浪（一个请求拿全部 ETF）和雪球提供。"}
+    </>
+  );
+
+  if (missingCore.length > 0) {
+    return (
+      <Tip tone="warn">
+        <strong>ETF 取不到 {missingCore.join("、")}</strong>
+        {"，ETF 页面会没有价格或 K 线。ETF 行情和日线主要靠新浪，先看上面主机探测里 "}
+        <code>vip.stock.finance.sina.com.cn</code> 和 <code>finance.sina.com.cn</code> 通不通。
+        <br />
+        <br />
+        {expectedNote}
+      </Tip>
+    );
+  }
+  return (
+    <Tip tone={missingExtra.length > 0 ? "warn" : "ok"}>
+      <strong>ETF 的行情和 K 线都能从真实数据源取到。</strong>
+      {missingExtra.length > 0 && (
+        <>
+          {` 但 ${missingExtra.join("、")} 取不到（来自天天基金 `}
+          <code>fundf10.eastmoney.com</code>
+          {"），分析 ETF 时基本面这一块会注明缺数据，价格和 K 线不受影响。"}
+        </>
+      )}
+      <br />
+      <br />
+      {expectedNote}
+    </Tip>
+  );
 }
 
 function Tip({

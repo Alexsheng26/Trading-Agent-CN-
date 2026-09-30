@@ -6,6 +6,8 @@ AKShare 免费、免注册、覆盖面广，是本项目的默认数据源。
   2. 接口偶发失败或字段改名很常见 —— 取字段一律走 `_pick()` 容错，
      拿不到就抛 `ProviderUnavailable` 让 registry 降级到 Tushare。
 
+ETF 走另一组接口（东财 `fund_etf_*` + 天天基金档案），见各方法里的分支。
+
 安装：pip install -e ".[akshare]"
 """
 
@@ -13,15 +15,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import date, datetime
 from typing import Any
 
-from app.core.clock import now_utc
+from app.core.clock import now_cst, now_utc
 from app.core.errors import ProviderUnavailable
 from app.data.base import (
     CAP_BARS,
     CAP_BASIC,
+    CAP_ETF_BARS,
+    CAP_ETF_LIST,
+    CAP_ETF_QUOTE,
     CAP_FINANCIALS,
+    CAP_FUND_HOLDINGS,
+    CAP_FUND_PROFILE,
     CAP_INDEXES,
     CAP_MONEY_FLOW,
     CAP_NEWS,
@@ -29,6 +37,8 @@ from app.data.base import (
     CAP_SEARCH,
     Bar,
     FinancialReport,
+    FundHolding,
+    FundProfile,
     IndexQuote,
     MoneyFlow,
     NewsItem,
@@ -52,6 +62,11 @@ class AkshareProvider:
             CAP_NEWS,
             CAP_MONEY_FLOW,
             CAP_INDEXES,
+            CAP_ETF_QUOTE,
+            CAP_ETF_BARS,
+            CAP_ETF_LIST,
+            CAP_FUND_PROFILE,
+            CAP_FUND_HOLDINGS,
         }
     )
 
@@ -133,6 +148,18 @@ class AkshareProvider:
         return rows
 
     async def stock_basic(self, symbol: Symbol) -> StockBasic:
+        if symbol.is_etf:
+            # 个股信息接口查不到基金。ETF 的"基础信息"来自基金档案：
+            # 行业一栏放跟踪标的 —— 对 ETF 来说这才是它"属于什么"
+            profile = await self.fund_profile(symbol)
+            return StockBasic(
+                symbol=symbol.canonical,
+                name=profile.name,
+                exchange=symbol.exchange,
+                board=symbol.board,
+                industry=profile.tracking_index or profile.fund_type,
+                list_date=profile.inception_date,
+            )
         df = await self._call("stock_individual_info_em", symbol=symbol.akshare)
         info = {str(r["item"]): r["value"] for _, r in df.iterrows()} if not df.empty else {}
         list_date = _parse_date(info.get("上市时间"))
@@ -164,7 +191,14 @@ class AkshareProvider:
         注意：该接口判断市场只看代码是否以 6 开头，北交所（8/4 开头）会被
         当成深市，查不到数据 —— 那种情况下它会取值失败并抛出，registry 照常
         降级到下一个数据源，不会返回错的价格。
+
+        ETF 同理：深市 ETF（159）能正确查到；沪市 ETF（5 开头）会被当成深市，
+        所以直接跳过，由雪球 / 新浪提供 —— 发一个注定查错的请求没有意义。
         """
+        if symbol.is_etf and symbol.exchange == "SH":
+            raise ProviderUnavailable(
+                "东财盘口接口按代码是否 6 开头判断沪市，沪市 ETF 会被查成深市，已跳过"
+            )
         raw = await self._call("stock_bid_ask_em", symbol=symbol.code)
         if raw is None or raw.empty:
             raise ProviderUnavailable(
@@ -184,11 +218,31 @@ class AkshareProvider:
         change_pct = _to_float(fields.get("涨幅"))
         if change_pct is None and prev_close:
             change_pct = round((price - prev_close) / prev_close * 100, 2)
+        # 总手的单位是"手"，1 手 = 100 股（ETF 是 100 份）
+        volume_lots = _to_float(fields.get("总手"))
+
+        if symbol.is_etf:
+            # ETF 没有市盈率、市净率；个股信息接口也查不到它的名称和市值。
+            # 名称刻意不在这里查：唯一的来源是天天基金档案页，akshare 请求它时
+            # 不带超时 —— 它一慢，这条每 5 秒轮询一次的行情就跟着超时，
+            # 明明价格一秒就拿到了。名称留空，quote_with_fallback 会从本地代码目录补
+            return Quote(
+                symbol=symbol.canonical,
+                name="",
+                price=price,
+                prev_close=prev_close,
+                open=_to_float(fields.get("今开")),
+                high=_to_float(fields.get("最高")),
+                low=_to_float(fields.get("最低")),
+                change_pct=change_pct,
+                volume=volume_lots * 100 if volume_lots is not None else None,
+                amount=_to_float(fields.get("金额")),
+                turnover_rate=_to_float(fields.get("换手")),
+                updated_at=now_utc(),
+            )
 
         basic = await self._basic_info(symbol)
         valuation = await self._valuation(symbol)
-        # 总手的单位是"手"，1 手 = 100 股
-        volume_lots = _to_float(fields.get("总手"))
 
         return Quote(
             symbol=symbol.canonical,
@@ -260,8 +314,10 @@ class AkshareProvider:
     async def daily_bars(
         self, symbol: Symbol, start: date, end: date, adjust: str = "qfq"
     ) -> list[Bar]:
+        # ETF 日线接口的参数和返回列与个股的完全一致，只是函数不同；
+        # 它自己按 5/6 开头判断沪市，ETF 代码不会被查错
         df = await self._call(
-            "stock_zh_a_hist",
+            "fund_etf_hist_em" if symbol.is_etf else "stock_zh_a_hist",
             symbol=symbol.akshare,
             period="daily",
             start_date=start.strftime("%Y%m%d"),
@@ -291,6 +347,8 @@ class AkshareProvider:
 
     async def financials(self, symbol: Symbol, periods: int = 8) -> list[FinancialReport]:
         """用东财的财务摘要（按报告期一列一期）。"""
+        if symbol.is_etf:
+            raise ProviderUnavailable("ETF 没有财报，看 fund_profile / fund_holdings")
         df = await self._call("stock_financial_abstract", symbol=symbol.akshare)
         if df.empty:
             return []
@@ -338,8 +396,12 @@ class AkshareProvider:
             )
         return reports
 
-    async def news(self, symbol: Symbol, limit: int = 20) -> list[NewsItem]:
-        df = await self._call("stock_news_em", symbol=symbol.akshare)
+    async def news(
+        self, symbol: Symbol, limit: int = 20, keyword: str | None = None
+    ) -> list[NewsItem]:
+        # 这个接口本质是东财站内搜索，参数就是搜索词 ——
+        # ETF 按代码几乎搜不到东西，上层会传"半导体"这类板块词进来
+        df = await self._call("stock_news_em", symbol=keyword or symbol.akshare)
         items: list[NewsItem] = []
         for _, row in df.head(limit).iterrows():
             items.append(
@@ -418,6 +480,81 @@ class AkshareProvider:
             )
         return out
 
+    # ---------------- ETF ----------------
+
+    async def etf_list(self) -> list[StockBasic]:
+        """全部场内 ETF。
+
+        ⚠️ 和股票全市场快照一样要翻页（1000 多只，每页 100 条，页间 sleep），
+        单次 15-20 秒，只能在后台建目录时用。
+        """
+        df = await self._call("fund_etf_spot_em")
+        out: list[StockBasic] = []
+        for _, row in df.iterrows():
+            sym = try_normalize(str(_pick(row, "代码") or ""))
+            if sym is None or not sym.is_etf:
+                continue
+            out.append(
+                StockBasic(
+                    symbol=sym.canonical,
+                    name=str(_pick(row, "名称") or ""),
+                    exchange=sym.exchange,
+                    board=sym.board,
+                )
+            )
+        return out
+
+    async def fund_profile(self, symbol: Symbol) -> FundProfile:
+        """天天基金的基金档案（跟踪标的、规模、费率……）。一天变不了几次，强缓存。"""
+        from app.core.config import get_settings  # noqa: PLC0415 —— 避免循环导入
+        from app.data.cache import cache  # noqa: PLC0415
+
+        async def load() -> FundProfile:
+            df = await self._call("fund_overview_em", symbol=symbol.code)
+            if df is None or df.empty:
+                raise ProviderUnavailable(f"天天基金没有 {symbol.canonical} 的档案")
+            info = {str(k).strip(): v for k, v in df.iloc[0].items()}
+            return parse_fund_overview(symbol, info)
+
+        return await cache.get_or_set(
+            f"akshare:fund_profile:{symbol.code}", get_settings().history_cache_ttl, load
+        )
+
+    async def fund_holdings(self, symbol: Symbol) -> list[FundHolding]:
+        """最近一期披露的前十大重仓股。
+
+        接口按年份查。年初时今年还没有季报，所以今年查不到就退回去年。
+        """
+        df = None
+        error: ProviderUnavailable | None = None
+        this_year = now_cst().year
+        for year in (this_year, this_year - 1):
+            try:
+                df = await self._call(
+                    "fund_portfolio_hold_em", symbol=symbol.code, date=str(year)
+                )
+            except ProviderUnavailable as exc:
+                # 今年的页面可能还不存在（解析失败而不是返回空表），照样退回去年
+                error, df = exc, None
+                continue
+            if df is not None and not df.empty:
+                break
+        if df is None or df.empty:
+            if error is not None:
+                raise error
+            return []
+        return pick_latest_holdings(
+            [
+                (
+                    str(_pick(r, "股票代码") or ""),
+                    str(_pick(r, "股票名称") or ""),
+                    _to_float(_pick(r, "占净值比例")),
+                    str(_pick(r, "季度") or ""),
+                )
+                for _, r in df.iterrows()
+            ]
+        )
+
     # ---------------- 全市场快照（多个接口共用） ----------------
 
     async def _spot(self) -> Any:
@@ -436,6 +573,103 @@ class AkshareProvider:
         return await cache.get_or_set(
             "akshare:spot_em", ttl, lambda: self._call("stock_zh_a_spot_em")
         )
+
+
+# ---------------------------------------------------------------- ETF 解析
+
+
+def parse_fund_overview(symbol: Symbol, info: dict[str, Any]) -> FundProfile:
+    """把天天基金档案页的键值表转成 `FundProfile`。
+
+    这张表的值是给人看的字符串，例如：
+        资产规模      123.45亿元（截止至：2025年06月30日）
+        成立日期/规模  2019年05月08日 / 12.345亿份
+        管理费率      0.50%（每年）
+        跟踪标的      中证全指半导体产品与设备指数
+    解析不出来的字段留空，不猜。
+    """
+
+    def text(key: str) -> str:
+        value = info.get(key)
+        if value is None:
+            return ""
+        s = str(value).strip()
+        return "" if s in ("", "nan", "None", "--", "---") else s
+
+    size_text = text("资产规模")
+    tracking = text("跟踪标的")
+    if "无跟踪标的" in tracking:
+        tracking = ""
+    inception = text("成立日期/规模").split("/")[0].strip() or text("成立日期")
+
+    return FundProfile(
+        symbol=symbol.canonical,
+        name=text("基金简称"),
+        full_name=text("基金全称"),
+        fund_type=text("基金类型"),
+        tracking_index=tracking,
+        benchmark=text("业绩比较基准"),
+        manager=text("基金管理人"),
+        inception_date=_parse_date(inception),
+        asset_size=_amount_with_unit(size_text),
+        asset_size_date=_parse_date(_date_in_parens(size_text)),
+        share_size=_amount_with_unit(text("份额规模")),
+        management_fee=_leading_number(text("管理费率")),
+        custody_fee=_leading_number(text("托管费率")),
+    )
+
+
+_QUARTER_RE = re.compile(r"(\d{4})\s*年\s*(\d)\s*季度")
+
+
+def pick_latest_holdings(
+    rows: list[tuple[str, str, float | None, str]], top: int = 10
+) -> list[FundHolding]:
+    """从多期持仓里挑出最近一期，按占净值比例降序取前 `top` 只。
+
+    接口一次返回一整年的几个季度，而且不保证顺序 —— 按季度标签解析出
+    (年, 季) 比较，而不是信任行序。
+    """
+
+    def key(label: str) -> tuple[int, int]:
+        m = _QUARTER_RE.search(label)
+        return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+
+    if not rows:
+        return []
+    latest = max((r[3] for r in rows), key=key)
+    m = _QUARTER_RE.search(latest)
+    period = f"{m.group(1)}年{m.group(2)}季度" if m else latest
+
+    picked = [
+        FundHolding(code=code.strip(), name=name.strip(), weight_pct=weight, period=period)
+        for code, name, weight, label in rows
+        if label == latest and code.strip()
+    ]
+    picked.sort(key=lambda h: h.weight_pct if h.weight_pct is not None else -1, reverse=True)
+    return picked[:top]
+
+
+def _amount_with_unit(text: str) -> float | None:
+    """"123.45亿元" / "5,678.9万份" -> 数值（元 / 份）。"""
+    m = re.search(r"([\d,]+(?:\.\d+)?)\s*(亿|万)?", text or "")
+    if not m:
+        return None
+    try:
+        value = float(m.group(1).replace(",", ""))
+    except ValueError:
+        return None
+    return value * {"亿": 1e8, "万": 1e4}.get(m.group(2) or "", 1.0)
+
+
+def _leading_number(text: str) -> float | None:
+    m = re.search(r"-?\d+(?:\.\d+)?", text or "")
+    return float(m.group(0)) if m else None
+
+
+def _date_in_parens(text: str) -> str:
+    m = re.search(r"(\d{4}年\d{1,2}月\d{1,2}日|\d{4}-\d{2}-\d{2})", text or "")
+    return m.group(1) if m else ""
 
 
 # ---------------------------------------------------------------- 字段容错工具

@@ -46,14 +46,28 @@ async def quote_with_fallback(registry: ProviderRegistry, symbol: Symbol) -> Quo
     该让界面明确报错，而不是编一个数字。
     """
     try:
-        return await registry.quote(symbol)
+        quote = await registry.quote(symbol)
     except DataNotFound as realtime_error:
         log.info("%s 实时行情不可用，尝试用日线兜底：%s", symbol.canonical, realtime_error)
         fallback = await _from_last_bar(registry, symbol)
-        if fallback is not None:
-            return fallback
-        # 日线也没有：把实时接口的原始报错抛出去，那个信息对排查更有用
-        raise
+        if fallback is None:
+            # 日线也没有：把实时接口的原始报错抛出去，那个信息对排查更有用
+            raise
+        quote = fallback
+    if not quote.name:
+        quote.name = await _directory_name(symbol)
+    return quote
+
+
+async def _directory_name(symbol: Symbol) -> str:
+    """没名字的行情（日线兜底、部分 ETF 接口）从本地代码目录补名称。"""
+    from app.services import symbol_index  # noqa: PLC0415 —— 避免循环导入
+
+    try:
+        return await symbol_index.name_of(symbol.canonical)
+    except Exception as exc:  # 名称只是锦上添花，查不到也不能让行情失败
+        log.info("查 %s 的目录名称失败：%s", symbol.canonical, exc)
+        return ""
 
 
 async def _from_last_bar(registry: ProviderRegistry, symbol: Symbol) -> Quote | None:
@@ -73,7 +87,7 @@ async def _from_last_bar(registry: ProviderRegistry, symbol: Symbol) -> Quote | 
 
     return Quote(
         symbol=symbol.canonical,
-        # 日线接口不带名称。留空，上层会从本地代码目录补
+        # 日线接口不带名称。留空，quote_with_fallback 会从本地代码目录补
         name="",
         price=last.close,
         prev_close=prev_close,

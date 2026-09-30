@@ -44,10 +44,20 @@ class AnalysisContext:
         return cls(
             symbol=snapshot.symbol,
             snapshot=snapshot,
-            indicators=compute_snapshot(snapshot.bars),
+            indicators=compute_snapshot(
+                snapshot.bars, price_decimals=snapshot.symbol.price_decimals
+            ),
             horizon=horizon if horizon in HORIZONS else "波段",
             user_note=user_note.strip(),
         )
+
+    @property
+    def is_etf(self) -> bool:
+        return self.symbol.is_etf
+
+    def _px(self, value: float | None) -> str:
+        """价格按品种精度输出：ETF 三位小数，股票两位。"""
+        return _num(value, self.symbol.price_decimals)
 
     @property
     def display_name(self) -> str:
@@ -67,15 +77,18 @@ class AnalysisContext:
             self._indicator_section(),
             self._fib_section(),
             self._price_history_section(),
-            self._financial_section(),
+            self._fund_section() if self.is_etf else self._financial_section(),
             self._money_flow_section(),
             self._news_section(),
             self._market_section(),
+            self._etf_guide_section() if self.is_etf else "",
             self._meta_section(),
         ]
         return "\n\n".join(p for p in parts if p)
 
     def _header(self) -> str:
+        if self.is_etf:
+            return self._etf_header()
         basic = self.snapshot.basic
         lines = [
             "# 标的行情简报",
@@ -95,6 +108,27 @@ class AnalysisContext:
             if basic.list_date:
                 years = (date.today() - basic.list_date).days / 365.25
                 lines.append(f"- 上市日期：{basic.list_date}（已上市约 {years:.1f} 年）")
+        return "\n".join(lines)
+
+    def _etf_header(self) -> str:
+        profile = self.snapshot.fund_profile
+        lines = [
+            "# 标的行情简报",
+            "",
+            f"- 名称：{self.display_name}",
+            f"- 代码：{self.symbol.canonical}",
+            "- 品种：**ETF（交易型开放式指数基金）**，不是个股",
+        ]
+        if profile and profile.tracking_index:
+            lines.append(f"- 跟踪标的：{profile.tracking_index}")
+        lines += [
+            "- 涨跌幅限制：一般 ±10%；跟踪科创板 / 创业板指数的 ETF 为 ±20%"
+            f"（按代码初判为 ±{self.symbol.price_limit_pct:g}%，以交易所规则为准）",
+            f"- 交易制度：{_etf_settlement_rule(self.display_name, profile)}",
+            "- 价格精度：0.001 元（给出的价位请保留三位小数）",
+            f"- 数据截止：{self.as_of:%Y-%m-%d %H:%M}",
+            f"- 分析周期：{self.horizon}（{HORIZONS[self.horizon]}）",
+        ]
         return "\n".join(lines)
 
     def _quote_section(self) -> str:
@@ -117,13 +151,19 @@ class AnalysisContext:
         lines = [
             "## 最新行情",
             stale_warning,
-            f"- 最新价：{_num(q.price)}"
+            f"- 最新价：{self._px(q.price)}"
             + ("（收盘价，非实时）" if getattr(q, "is_realtime", True) is False else ""),
             f"- 涨跌幅：{_num(q.change_pct)}%",
-            f"- 今开/最高/最低：{_num(q.open)} / {_num(q.high)} / {_num(q.low)}",
-            f"- 昨收：{_num(q.prev_close)}",
+            f"- 今开/最高/最低：{self._px(q.open)} / {self._px(q.high)} / {self._px(q.low)}",
+            f"- 昨收：{self._px(q.prev_close)}",
             f"- 成交额：{_yi(q.amount)}",
             f"- 换手率：{_num(q.turnover_rate)}%",
+        ]
+        if self.is_etf:
+            # ETF 没有市盈率、市净率、市值 —— 不列出来，免得模型对着"数据缺失"
+            # 去解释估值；规模在后面的 ETF 概况里
+            return "\n".join(lines)
+        lines += [
             f"- 市盈率(TTM)：{_num(q.pe_ttm)}",
             f"- 市净率：{_num(q.pb)}",
             f"- 总市值：{_yi(q.total_market_cap)}",
@@ -135,18 +175,21 @@ class AnalysisContext:
         i = self.indicators
         if i.close is None:
             return "## 技术指标\n\n⚠️ K线数据缺失，无法计算技术指标。"
+        md = 4 if self.is_etf else 2
         lines = [
             "## 技术指标（基于前复权日线）",
             "",
-            f"- 均线：MA5：{_num(i.ma5)}　MA10：{_num(i.ma10)}　MA20：{_num(i.ma20)}"
-            f"　MA60：{_num(i.ma60)}　MA120：{_num(i.ma120)}",
-            f"- MACD：DIF：{_num(i.macd_dif)}　DEA：{_num(i.macd_dea)}　柱：{_num(i.macd_hist)}",
+            f"- 均线：MA5：{self._px(i.ma5)}　MA10：{self._px(i.ma10)}　MA20：{self._px(i.ma20)}"
+            f"　MA60：{self._px(i.ma60)}　MA120：{self._px(i.ma120)}",
+            # ETF 价格在 1 元上下，MACD 常是 0.003 这种量级，两位小数会显示成 0
+            f"- MACD：DIF：{_num(i.macd_dif, md)}　DEA：{_num(i.macd_dea, md)}"
+            f"　柱：{_num(i.macd_hist, md)}",
             f"- RSI6：{_num(i.rsi6)}　RSI14：{_num(i.rsi14)}",
-            f"- 布林带：上轨：{_num(i.boll_upper)}　中轨：{_num(i.boll_mid)}"
-            f"　下轨：{_num(i.boll_lower)}",
+            f"- 布林带：上轨：{self._px(i.boll_upper)}　中轨：{self._px(i.boll_mid)}"
+            f"　下轨：{self._px(i.boll_lower)}",
             f"- KDJ：K：{_num(i.kdj_k)}　D：{_num(i.kdj_d)}　J：{_num(i.kdj_j)}",
-            f"- ATR14：{_num(i.atr14)}（占股价 {_num(i.atr_pct)}%）",
-            f"- 60日区间：最高 {_num(i.high_60)}　最低 {_num(i.low_60)}"
+            f"- ATR14：{self._px(i.atr14)}（占价格 {_num(i.atr_pct)}%）",
+            f"- 60日区间：最高 {self._px(i.high_60)}　最低 {self._px(i.low_60)}"
             f"　距高点 {_num(i.pct_from_high_60)}%",
             f"- 区间涨幅：20日 {_num(i.return_20d)}%　60日 {_num(i.return_60d)}%",
             f"- 20日年化波动率：{_num(i.volatility_20d)}%",
@@ -235,8 +278,8 @@ class AnalysisContext:
         for b in bars:
             amount_yi = f"{b.amount / 1e8:.2f}" if b.amount else "-"
             lines.append(
-                f"| {b.date} | {_num(b.open)} | {_num(b.high)} | {_num(b.low)} "
-                f"| {_num(b.close)} | {_num(b.change_pct)} | {amount_yi} |"
+                f"| {b.date} | {self._px(b.open)} | {self._px(b.high)} | {self._px(b.low)} "
+                f"| {self._px(b.close)} | {_num(b.change_pct)} | {amount_yi} |"
             )
         return "\n".join(lines)
 
@@ -268,6 +311,80 @@ class AnalysisContext:
             )
         return "\n".join(lines)
 
+    def _fund_section(self) -> str:
+        """ETF 概况 + 重仓股。对 ETF 来说这才是"基本面"。"""
+        p = self.snapshot.fund_profile
+        parts: list[str] = []
+        if p is None:
+            parts.append(
+                "## ETF 概况\n\n⚠️ ETF 概况数据缺失（跟踪标的、规模、费率都拿不到），"
+                "基本面判断请明确说明受此限制。"
+            )
+        else:
+            size = _yi(p.asset_size)
+            if p.asset_size is not None and p.asset_size_date:
+                size += f"（截至 {p.asset_size_date}）"
+            lines = [
+                "## ETF 概况",
+                "",
+                f"- 基金全称：{p.full_name or '数据缺失'}",
+                f"- 基金类型：{p.fund_type or '数据缺失'}",
+                f"- 跟踪标的：{p.tracking_index or '数据缺失'}",
+                f"- 业绩比较基准：{p.benchmark or '数据缺失'}",
+                f"- 基金管理人：{p.manager or '数据缺失'}",
+                f"- 成立日期：{p.inception_date or '数据缺失'}",
+                f"- 资产规模：{size}",
+                f"- 份额规模：{_yi(p.share_size, unit=False).replace('亿', ' 亿份')}"
+                if p.share_size is not None
+                else "- 份额规模：数据缺失",
+                f"- 管理费率：{_num(p.management_fee)}%/年　托管费率：{_num(p.custody_fee)}%/年",
+            ]
+            if p.asset_size is not None and p.asset_size < 5e7:
+                lines.append(
+                    "- ⚠️ 规模低于 5000 万元：长期低于该线的 ETF 可能触发清盘，需在风险中提示"
+                )
+            parts.append("\n".join(lines))
+
+        holdings = self.snapshot.holdings
+        if not holdings:
+            parts.append("## 重仓股\n\n⚠️ 重仓股数据缺失，无法判断成分集中度。")
+        else:
+            total = sum(h.weight_pct or 0 for h in holdings)
+            lines = [
+                f"## 前 {len(holdings)} 大重仓股（{holdings[0].period or '最近一期'}披露）",
+                "",
+                "| 代码 | 名称 | 占净值% |",
+                "| --- | --- | --- |",
+            ]
+            lines += [f"| {h.code} | {h.name} | {_num(h.weight_pct)} |" for h in holdings]
+            lines += [
+                "",
+                f"前 {len(holdings)} 大合计占净值 {_num(total)}%"
+                "（越高说明越集中，受少数成分股影响越大）。"
+                "注意这是季报披露的持仓，距今可能已有一到三个月。",
+            ]
+            parts.append("\n".join(lines))
+        return "\n\n".join(parts)
+
+    def _etf_guide_section(self) -> str:
+        """告诉各分析师 ETF 和个股的不同，免得拿看个股的框架硬套。"""
+        return "\n".join(
+            [
+                "## 本标的是 ETF：分析要点",
+                "",
+                "- **没有财报和市盈率**。基本面看跟踪指数所代表的行业景气度、"
+                "重仓股集中度、基金规模与费率，不要索要财报数据。",
+                "- **个股层面的风险大多被分散**（单一公司业绩暴雷、停牌），"
+                "但行业 / 风格整体的风险完全暴露。",
+                "- **ETF 特有风险**：跟踪误差、二级市场价格相对净值的折溢价"
+                "（简报未提供时要说明无法判断）、规模过小的清盘风险、流动性（看成交额）。",
+                "- **资金面**：ETF 的申购赎回由做市商和机构完成，主力资金流向对 ETF 的"
+                "指示意义弱于个股，解读时要打折扣。",
+                "- **消息面**：新闻按板块关键词检索，反映的是行业层面的消息，"
+                "不是这只基金本身的公告。",
+            ]
+        )
+
     def _money_flow_section(self) -> str:
         flows = self.snapshot.money_flow
         if not flows:
@@ -292,7 +409,11 @@ class AnalysisContext:
         news = self.snapshot.news
         if not news:
             return "## 新闻与公告\n\n⚠️ 新闻数据缺失，消息面判断请明确说明受此限制。"
-        lines = [f"## 新闻与公告（近 {len(news)} 条）", ""]
+        if self.snapshot.news_keyword:
+            header = f"## 板块新闻（按关键词“{self.snapshot.news_keyword}”检索，近 {len(news)} 条）"
+        else:
+            header = f"## 新闻与公告（近 {len(news)} 条）"
+        lines = [header, ""]
         for n in news:
             when = f"{n.published_at:%m-%d %H:%M}" if n.published_at else "时间未知"
             source = f"｜{n.source}" if n.source else ""
@@ -327,6 +448,32 @@ class AnalysisContext:
                 "不具备任何现实意义。请在结论开头明确声明这一点。**"
             )
         return "\n".join(lines) if len(lines) > 1 else ""
+
+
+# ---------------------------------------------------------------- ETF 交易规则
+
+#: 名称或跟踪标的里出现这些词，大概率是 T+0 品种（跨境、债券、黄金、货币 ETF）
+_T0_HINTS = (
+    "黄金", "债", "货币", "日利", "添益", "短融",
+    "纳指", "纳斯达克", "标普", "道琼斯", "恒生", "港股", "H股", "中概",
+    "日经", "德国", "法国", "美国", "亚太", "东南亚", "沙特", "海外", "全球", "QDII",
+)  # fmt: skip
+
+
+def _etf_settlement_rule(name: str, profile: object | None) -> str:
+    """ETF 的交收规则。
+
+    股票类 ETF 是 T+1；跨境、债券、黄金、货币 ETF 是 T+0。光看代码分不出来，
+    这里按名称和跟踪标的里的关键词初判，并把规则原文一起给模型。
+    """
+    text = name + " " + str(getattr(profile, "tracking_index", "") or "")
+    # "黄金股ETF"持有的是 A股金矿股，是 T+1 的股票类 ETF，别被"黄金"两个字骗了
+    text = text.replace("黄金股", "")
+    hit = next((kw for kw in _T0_HINTS if kw in text), None)
+    rule = "股票类 ETF 为 T+1；跨境、债券、黄金、货币 ETF 为 T+0"
+    if hit:
+        return f"{rule}。按名称中的“{hit}”初判本只**可能是 T+0 品种**，以交易所规则为准"
+    return f"{rule}。按名称初判本只为 **T+1**（股票类），以交易所规则为准"
 
 
 # ---------------------------------------------------------------- 格式化

@@ -25,6 +25,10 @@
 
 底层仍然借 akshare 的函数（它已经把这些站点的解析写好了），
 所以需要装 akshare；也同样受益于浏览器指纹那层替换。
+
+**ETF**：两个源都能提供 ETF 行情，新浪还能提供 ETF 日线和全部 ETF 列表。
+新浪那张 ETF 列表一个请求就带齐所有 ETF 的实时价，是沪市 ETF 最可靠的来源
+（东财盘口接口会把 5 开头的沪市 ETF 查成深市）。
 """
 
 from __future__ import annotations
@@ -35,9 +39,12 @@ from datetime import date
 from typing import Any
 
 from app.core.clock import now_utc
-from app.core.errors import ProviderUnavailable
+from app.core.errors import CapabilityNotSupported, ProviderUnavailable
 from app.data.base import (
     CAP_BARS,
+    CAP_ETF_BARS,
+    CAP_ETF_LIST,
+    CAP_ETF_QUOTE,
     CAP_INDEXES,
     CAP_QUOTE,
     CAP_SEARCH,
@@ -108,7 +115,8 @@ class XueqiuProvider(_AkshareBacked):
     """
 
     name = "xueqiu"
-    capabilities = frozenset({CAP_QUOTE})
+    # 雪球的行情接口同样支持场内基金（akshare 文档写明"A 股场内基金代码"）
+    capabilities = frozenset({CAP_QUOTE, CAP_ETF_QUOTE})
 
     async def quote(self, symbol: Symbol) -> Quote:
         from app.core.config import get_settings  # noqa: PLC0415 —— 避免循环导入
@@ -160,8 +168,9 @@ class XueqiuProvider(_AkshareBacked):
             amount=_num(f.get("成交额")),
             # 雪球把换手率叫"周转率"
             turnover_rate=_num(f.get("周转率", f.get("换手率"))),
-            pe_ttm=_num(f.get("市盈率(TTM)")),
-            pb=_num(f.get("市净率")),
+            # ETF 没有估值。雪球对基金偶尔也回这两个字段（通常为空），一律不用
+            pe_ttm=None if symbol.is_etf else _num(f.get("市盈率(TTM)")),
+            pb=None if symbol.is_etf else _num(f.get("市净率")),
             total_market_cap=_num(f.get("资产净值/总市值", f.get("总市值"))),
             float_market_cap=_num(f.get("流通值")),
             updated_at=now_utc(),
@@ -172,7 +181,9 @@ class SinaProvider(_AkshareBacked):
     """新浪的日线、大盘指数与全市场列表。主机是 *.sina.com.cn，和东方财富无关。"""
 
     name = "sina"
-    capabilities = frozenset({CAP_BARS, CAP_INDEXES, CAP_SEARCH})
+    capabilities = frozenset(
+        {CAP_BARS, CAP_INDEXES, CAP_SEARCH, CAP_ETF_QUOTE, CAP_ETF_BARS, CAP_ETF_LIST}
+    )
 
     #: 首页展示的指数。新浪用的代码前面带市场前缀
     _WANTED_INDEXES = {
@@ -222,6 +233,8 @@ class SinaProvider(_AkshareBacked):
     async def daily_bars(
         self, symbol: Symbol, start: date, end: date, adjust: str = "qfq"
     ) -> list[Bar]:
+        if symbol.is_etf:
+            return await self._etf_bars(symbol, start, end)
         df = await self._call(
             "stock_zh_a_daily",
             symbol=symbol.sina,
@@ -247,12 +260,112 @@ class SinaProvider(_AkshareBacked):
                     close=close,
                     volume=_num(row.get("volume")) or 0.0,
                     amount=_num(row.get("amount")) or 0.0,
-                    # 新浪这个接口不给涨跌幅，留空 —— 指标层会自己按收盘价算
                     change_pct=None,
                     turnover_rate=_num(row.get("turnover")),
                 )
             )
-        return bars
+        # 新浪这个接口不给涨跌幅。不补的话，简报里"最近 20 日量价"那张表
+        # 的涨跌幅一栏整列都是"数据缺失"，模型看不到每天的涨跌
+        return _fill_change_pct(bars)
+
+    # ---------------- ETF ----------------
+
+    #: ETF 列表缓存多久（秒）。它一次带齐所有 ETF 的实时价，
+    #: 前端每 5 秒轮询一次，10 秒内的请求共用一次下载
+    _ETF_TABLE_TTL = 10
+
+    async def quote(self, symbol: Symbol) -> Quote:
+        """ETF 实时行情（从全部 ETF 列表里取一行）。股票不走这里。"""
+        if not symbol.is_etf:
+            raise CapabilityNotSupported("新浪源只提供 ETF 的实时行情")
+        row = (await self._etf_table()).get(symbol.sina)
+        if row is None:
+            raise ProviderUnavailable(f"新浪 ETF 列表里没有 {symbol.canonical}")
+
+        price = _num(row.get("最新价"))
+        prev_close = _num(row.get("昨收"))
+        if price is None or price <= 0:
+            price = prev_close  # 停牌或开盘前现价为 0，用昨收兜底
+        if price is None:
+            raise ProviderUnavailable(f"新浪没返回 {symbol.canonical} 的价格")
+        change_pct = _num(row.get("涨跌幅"))
+        if change_pct is None and prev_close:
+            change_pct = round((price - prev_close) / prev_close * 100, 2)
+
+        return Quote(
+            symbol=symbol.canonical,
+            name=str(row.get("名称") or ""),
+            price=price,
+            prev_close=prev_close,
+            open=_num(row.get("今开")),
+            high=_num(row.get("最高")),
+            low=_num(row.get("最低")),
+            change_pct=change_pct,
+            volume=_num(row.get("成交量")),
+            amount=_num(row.get("成交额")),
+            updated_at=now_utc(),
+        )
+
+    async def etf_list(self) -> list[StockBasic]:
+        out: list[StockBasic] = []
+        for code, row in (await self._etf_table()).items():
+            sym = try_normalize(code)
+            if sym is None or not sym.is_etf:
+                continue
+            out.append(
+                StockBasic(
+                    symbol=sym.canonical,
+                    name=str(row.get("名称") or ""),
+                    exchange=sym.exchange,
+                    board=sym.board,
+                )
+            )
+        return out
+
+    async def _etf_table(self) -> dict[str, dict[str, Any]]:
+        """全部 ETF 的行情表，按新浪代码（sh512480）索引。单请求。"""
+        from app.data.cache import cache  # noqa: PLC0415
+
+        async def load() -> dict[str, dict[str, Any]]:
+            df = await self._call("fund_etf_category_sina", symbol="ETF基金")
+            if df is None or df.empty:
+                raise ProviderUnavailable("新浪 ETF 列表为空")
+            return {
+                str(r.get("代码") or "").strip().lower(): r.to_dict() for _, r in df.iterrows()
+            }
+
+        return await cache.get_or_set("sina:etf_table", self._ETF_TABLE_TTL, load)
+
+    async def _etf_bars(self, symbol: Symbol, start: date, end: date) -> list[Bar]:
+        """ETF 日线。
+
+        ⚠️ 新浪给的是**不复权**价格。ETF 分红通常很小，但份额折算（拆分）
+        会让价格一夜之间变成一半 —— 技术指标会把它当成暴跌。
+        所以只保留最近一次异常跳变之后的数据：K 线短一些，但每根都可比。
+        """
+        df = await self._call("fund_etf_hist_sina", symbol=symbol.sina)
+        if df is None or df.empty:
+            return []
+        bars: list[Bar] = []
+        for _, row in df.iterrows():
+            d = _as_date(row.get("date"))
+            close = _num(row.get("close"))
+            if d is None or close is None or not (start <= d <= end):
+                continue
+            bars.append(
+                Bar(
+                    date=d,
+                    open=_num(row.get("open")) or close,
+                    high=_num(row.get("high")) or close,
+                    low=_num(row.get("low")) or close,
+                    close=close,
+                    volume=_num(row.get("volume")) or 0.0,
+                    # 这个接口不给成交额
+                    amount=0.0,
+                    change_pct=None,
+                )
+            )
+        return _fill_change_pct(_drop_before_last_jump(bars, symbol))
 
     async def index_quotes(self) -> list[IndexQuote]:
         df = await self._call("stock_zh_index_spot_sina")
@@ -281,6 +394,34 @@ class SinaProvider(_AkshareBacked):
 
 
 # ---------------------------------------------------------------- 小工具
+
+#: 单日涨跌超过这个比例就不可能是正常交易（A股 / ETF 涨跌幅上限是 20%，北交所 30%
+#: 但北交所没有 ETF），只能是拆分、折算这类公司行为造成的价格断层
+_JUMP_THRESHOLD = 0.25
+
+
+def _drop_before_last_jump(bars: list[Bar], symbol: Symbol) -> list[Bar]:
+    for i in range(len(bars) - 1, 0, -1):
+        prev = bars[i - 1].close
+        if prev > 0 and abs(bars[i].close / prev - 1) > _JUMP_THRESHOLD:
+            log.warning(
+                "%s 在 %s 出现 %.0f%% 的价格断层（不复权数据里的份额折算），"
+                "只保留此后的 %d 根 K 线",
+                symbol.canonical,
+                bars[i].date,
+                (bars[i].close / prev - 1) * 100,
+                len(bars) - i,
+            )
+            return bars[i:]
+    return bars
+
+
+def _fill_change_pct(bars: list[Bar]) -> list[Bar]:
+    """按前一根收盘价补上缺失的涨跌幅。第一根没有前值，保持空。"""
+    for prev, cur in zip(bars, bars[1:], strict=False):
+        if cur.change_pct is None and prev.close:
+            cur.change_pct = round((cur.close / prev.close - 1) * 100, 2)
+    return bars
 
 
 def _num(value: Any) -> float | None:

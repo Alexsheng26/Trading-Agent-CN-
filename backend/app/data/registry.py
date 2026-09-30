@@ -22,7 +22,12 @@ from app.data.backup_providers import SinaProvider, XueqiuProvider
 from app.data.base import (
     CAP_BARS,
     CAP_BASIC,
+    CAP_ETF_BARS,
+    CAP_ETF_LIST,
+    CAP_ETF_QUOTE,
     CAP_FINANCIALS,
+    CAP_FUND_HOLDINGS,
+    CAP_FUND_PROFILE,
     CAP_INDEXES,
     CAP_MONEY_FLOW,
     CAP_NEWS,
@@ -31,6 +36,8 @@ from app.data.base import (
     Bar,
     DataProvider,
     FinancialReport,
+    FundHolding,
+    FundProfile,
     IndexQuote,
     MoneyFlow,
     NewsItem,
@@ -236,24 +243,42 @@ class ProviderRegistry:
         return await self._dispatch(CAP_BASIC, lambda p: p.stock_basic(symbol))
 
     async def quote(self, symbol: Symbol) -> Quote:
-        return await self._dispatch(CAP_QUOTE, lambda p: p.quote(symbol))
+        # 股票和 ETF 走不同的能力标识，见 base.py 里 CAP_ETF_* 的说明
+        cap = CAP_ETF_QUOTE if symbol.is_etf else CAP_QUOTE
+        return await self._dispatch(cap, lambda p: p.quote(symbol))
 
     async def daily_bars(
         self, symbol: Symbol, start: date, end: date, adjust: str = "qfq"
     ) -> list[Bar]:
-        return await self._dispatch(CAP_BARS, lambda p: p.daily_bars(symbol, start, end, adjust))
+        cap = CAP_ETF_BARS if symbol.is_etf else CAP_BARS
+        return await self._dispatch(cap, lambda p: p.daily_bars(symbol, start, end, adjust))
 
     async def financials(self, symbol: Symbol, periods: int = 8) -> list[FinancialReport]:
         return await self._dispatch(CAP_FINANCIALS, lambda p: p.financials(symbol, periods))
 
-    async def news(self, symbol: Symbol, limit: int = 20) -> list[NewsItem]:
-        return await self._dispatch(CAP_NEWS, lambda p: p.news(symbol, limit))
+    async def news(
+        self, symbol: Symbol, limit: int = 20, keyword: str | None = None
+    ) -> list[NewsItem]:
+        return await self._dispatch(CAP_NEWS, lambda p: p.news(symbol, limit, keyword=keyword))
 
     async def money_flow(self, symbol: Symbol, days: int = 10) -> list[MoneyFlow]:
         return await self._dispatch(CAP_MONEY_FLOW, lambda p: p.money_flow(symbol, days))
 
     async def index_quotes(self) -> list[IndexQuote]:
         return await self._dispatch(CAP_INDEXES, lambda p: p.index_quotes())
+
+    # ---------------- ETF 专用 ----------------
+
+    async def etf_list(self, attempt_timeout: float | None = None) -> list[StockBasic]:
+        return await self._dispatch(
+            CAP_ETF_LIST, lambda p: p.etf_list(), attempt_timeout=attempt_timeout
+        )
+
+    async def fund_profile(self, symbol: Symbol) -> FundProfile:
+        return await self._dispatch(CAP_FUND_PROFILE, lambda p: p.fund_profile(symbol))
+
+    async def fund_holdings(self, symbol: Symbol) -> list[FundHolding]:
+        return await self._dispatch(CAP_FUND_HOLDINGS, lambda p: p.fund_holdings(symbol))
 
 
 def _is_empty(value: Any) -> bool:

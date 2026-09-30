@@ -8,6 +8,7 @@ import { SessionBadge, TickPrice } from "@/components/LivePrice";
 import { StockSearch } from "@/components/StockSearch";
 import { ApiError, api } from "@/lib/api";
 import { changeColor, fmtClock, fmtMoney, fmtNum, fmtPct } from "@/lib/format";
+import { isEtfSymbol, priceDecimals } from "@/lib/symbols";
 import { useLiveIndexes, useLiveQuotes } from "@/lib/useLiveQuote";
 import type { Quote, WatchlistItem } from "@/lib/types";
 
@@ -162,7 +163,10 @@ export default function HomePage() {
                       </Link>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <TickPrice value={item.quote?.price} />
+                      <TickPrice
+                        value={item.quote?.price}
+                        digits={priceDecimals(item.symbol, item.quote)}
+                      />
                     </td>
                     <td className={`tabular px-4 py-3 text-right ${changeColor(item.quote?.change_pct)}`}>
                       {fmtPct(item.quote?.change_pct)}
@@ -174,7 +178,8 @@ export default function HomePage() {
                       {fmtPct(item.quote?.turnover_rate, false)}
                     </td>
                     <td className="tabular px-4 py-3 text-right text-[var(--muted)]">
-                      {fmtNum(item.quote?.pe_ttm)}
+                      {/* ETF 没有市盈率，直接标品种，别显示一个像是"取数失败"的横杠 */}
+                      {isEtfSymbol(item.symbol) ? "ETF" : fmtNum(item.quote?.pe_ttm)}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <Link
@@ -220,7 +225,7 @@ function WatchCard({
       </Link>
       <div className="shrink-0 text-right">
         <div className="text-[15px] font-medium">
-          <TickPrice value={item.quote?.price} />
+          <TickPrice value={item.quote?.price} digits={priceDecimals(item.symbol, item.quote)} />
         </div>
         <div className={`tabular text-xs ${changeColor(item.quote?.change_pct)}`}>
           {fmtPct(item.quote?.change_pct)}

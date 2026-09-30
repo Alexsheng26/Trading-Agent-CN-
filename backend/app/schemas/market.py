@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import date, datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -35,6 +37,22 @@ class QuoteOut(BaseModel):
     #: False = 这是最近一根日线的收盘价，不是实时价。前端必须显著标注
     is_realtime: bool = True
     quote_date: date | None = None
+    #: stock | etf。前端据此切换展示（ETF 没有市盈率，价格三位小数）
+    asset_type: str = "stock"
+    #: 价格小数位：股票 2，ETF 3
+    price_decimals: int = 2
+
+    @classmethod
+    def from_quote(cls, quote: Any) -> QuoteOut:
+        """由数据层的 `Quote` 构造，顺带补上品种和价格精度。"""
+        from app.data.symbols import try_normalize  # noqa: PLC0415
+
+        data = {k: v for k, v in asdict(quote).items() if k != "volume"}
+        sym = try_normalize(quote.symbol)
+        if sym is not None:
+            data["asset_type"] = sym.asset_type
+            data["price_decimals"] = sym.price_decimals
+        return cls(**data)
 
 
 class BarOut(BaseModel):

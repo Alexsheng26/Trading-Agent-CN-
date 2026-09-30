@@ -8,6 +8,9 @@ AKShare 那个全市场接口 5000+ 行，慢；它靠抓第三方网页，挂�
 
 改成：成功拉到一次就落库，之后搜索纯本地查询（毫秒级），
 数据源事后挂掉也照样能搜。启动时在后台建目录，不阻塞任何请求。
+
+目录同时收录股票和场内 ETF，两份列表分别拉取、互不拖累：
+ETF 列表挂了不影响股票，反之亦然。
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from sqlalchemy import func, or_, select
 
 from app.core.clock import now_utc
 from app.core.config import get_settings
+from app.core.errors import DataNotFound
 from app.data.base import StockBasic
 from app.data.registry import get_registry
 from app.data.symbols import try_normalize
@@ -45,6 +49,8 @@ class IndexStatus:
     stale: bool
     refreshing: bool
     sources: list[str]
+    #: 其中 ETF 有多少只。0 说明 ETF 列表还没拉成功，按名称搜不到 ETF
+    etf_count: int = 0
 
 
 # ---------------------------------------------------------------- 查询
@@ -133,6 +139,16 @@ async def status() -> IndexStatus:
         sources = list(
             (await session.scalars(select(SymbolDirectory.source).distinct())).all()
         )
+        etf_count = int(
+            (
+                await session.scalar(
+                    select(func.count(SymbolDirectory.symbol)).where(
+                        SymbolDirectory.board == "ETF"
+                    )
+                )
+            )
+            or 0
+        )
 
     # 顺手把 is_ready() 的计数缓存刷新一下，省掉下次搜索的那次 COUNT
     global _count
@@ -148,22 +164,60 @@ async def status() -> IndexStatus:
         stale=stale,
         refreshing=_refresh_task is not None and not _refresh_task.done(),
         sources=[s for s in sources if s],
+        etf_count=etf_count,
     )
 
 
 async def refresh() -> int:
-    """拉一次全市场列表并增量写入。返回新增+更新的条数。
+    """拉一次全市场列表（股票 + ETF）并增量写入。返回新增+更新的条数。
 
     只增不删：一次拉漏了不该把已有的好数据删掉。
+    两份列表都拉不到才报错；拉到一份就先写一份。
     """
+    registry = get_registry()
     # 全市场列表天生很慢（AKShare 要翻 54 页、每页 sleep 1 秒，60-90 秒），
     # 这里是后台任务，给足预算。默认的 12 秒会让它永远失败。
-    items = await get_registry().search(
-        "", _FETCH_LIMIT, attempt_timeout=get_settings().symbol_index_timeout
+    budget = get_settings().symbol_index_timeout
+    batches: list[tuple[list[StockBasic], str]] = []
+    errors: list[str] = []
+
+    try:
+        stocks = await registry.search("", _FETCH_LIMIT, attempt_timeout=budget)
+        batches.append((stocks, registry.last_sources.get("search", "") or ""))
+    except DataNotFound as exc:
+        errors.append(f"股票列表：{exc}")
+    try:
+        etfs = await registry.etf_list(attempt_timeout=budget)
+        batches.append((etfs, registry.last_sources.get("etf_list", "") or ""))
+    except DataNotFound as exc:
+        errors.append(f"ETF 列表：{exc}")
+
+    for err in errors:
+        log.warning("代码目录刷新：%s", err)
+    if not batches:
+        raise DataNotFound("；".join(errors))
+
+    total = 0
+    changed = 0
+    for items, source in batches:
+        total += len(items)
+        changed += await _write(items, source)
+
+    global _count
+    _count = None  # 下次 is_ready() 重新数
+    log.info(
+        "代码目录刷新完成：源=%s 收到 %d 条，写入 %d 条",
+        "、".join(src or "?" for _, src in batches),
+        total,
+        changed,
     )
-    source = get_registry().last_sources.get("search", "") or ""
+    return changed
+
+
+async def _write(items: list[StockBasic], source: str) -> int:
+    """增量写入一批代码。返回新增+更新的条数。"""
     if not items:
-        log.warning("代码目录刷新：数据源返回空列表，目录保持不变")
+        log.warning("代码目录刷新：%s 返回空列表，跳过", source or "数据源")
         return 0
 
     changed = 0
@@ -177,16 +231,17 @@ async def refresh() -> int:
                 continue
             row = existing.get(sym.canonical)
             if row is None:
-                session.add(
-                    SymbolDirectory(
-                        symbol=sym.canonical,
-                        code=sym.code,
-                        name=basic.name,
-                        exchange=sym.exchange,
-                        board=sym.board or "",
-                        source=source,
-                    )
+                row = SymbolDirectory(
+                    symbol=sym.canonical,
+                    code=sym.code,
+                    name=basic.name,
+                    exchange=sym.exchange,
+                    board=sym.board or "",
+                    source=source,
                 )
+                session.add(row)
+                # 记下来：同一批里再出现同一个代码时走"更新"分支，而不是重复插入撞主键
+                existing[sym.canonical] = row
                 changed += 1
             elif basic.name and row.name != basic.name:
                 # 改名的股票（ST、重组）要跟上
@@ -195,10 +250,6 @@ async def refresh() -> int:
                 row.updated_at = now_utc()
                 changed += 1
         await session.commit()
-
-    global _count
-    _count = None  # 下次 is_ready() 重新数
-    log.info("代码目录刷新完成：源=%s 收到 %d 条，写入 %d 条", source or "?", len(items), changed)
     return changed
 
 
@@ -245,7 +296,9 @@ async def refresh_if_needed() -> None:
     if not get_settings().symbol_index_autorefresh:
         return
     st = await status()
-    if st.count == 0 or st.stale:
+    # etf_count == 0：老版本建的目录里没有 ETF，升级后第一次启动就补上，
+    # 不用等 24 小时过期
+    if st.count == 0 or st.stale or st.etf_count == 0:
         schedule_refresh()
 
 

@@ -259,10 +259,20 @@ def test_capabilities_are_narrow() -> None:
     """这两个源只声明自己真能提供的接口，registry 才会正确地逐接口降级。"""
     from app.data.backup_providers import SinaProvider, XueqiuProvider
 
-    assert XueqiuProvider().capabilities == {"quote"}
+    # 雪球的行情接口股票和场内基金通用
+    assert XueqiuProvider().capabilities == {"quote", "etf_quote"}
     # sina 的 search 只给后台建代码目录用（它要翻 60 多页且有封 IP 风险），
-    # 请求路径上的搜索查的是本地表
-    assert SinaProvider().capabilities == {"daily_bars", "index_quotes", "search"}
+    # 请求路径上的搜索查的是本地表。
+    # 它**不**声明股票的 quote：新浪只能给 ETF 实时价（单请求拿全部 ETF），
+    # 股票实时价要翻页，放进请求路径必然超时
+    assert SinaProvider().capabilities == {
+        "daily_bars",
+        "index_quotes",
+        "search",
+        "etf_quote",
+        "etf_bars",
+        "etf_list",
+    }
 
 
 async def test_degrades_to_backup_when_eastmoney_quote_fails() -> None:

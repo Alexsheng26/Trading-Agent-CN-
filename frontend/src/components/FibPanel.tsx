@@ -12,11 +12,14 @@ export function FibPanel({
   close,
   enabled,
   onToggle,
+  decimals = 2,
 }: {
   fib: FibAnalysis;
   close?: number | null;
   enabled: boolean;
   onToggle: () => void;
+  /** 价格小数位：ETF 传 3 */
+  decimals?: number;
 }) {
   const up = fib.direction === "上升";
   const pct = fib.retracement_pct ?? 0;
@@ -52,16 +55,16 @@ export function FibPanel({
         ：
         {up ? (
           <>
-            低点 <span className="tabular">{fmtNum(fib.swing_low)}</span>
+            低点 <span className="tabular">{fmtNum(fib.swing_low, decimals)}</span>
             {fib.swing_low_date && `（${fib.swing_low_date}）`} → 高点{" "}
-            <span className="tabular">{fmtNum(fib.swing_high)}</span>
+            <span className="tabular">{fmtNum(fib.swing_high, decimals)}</span>
             {fib.swing_high_date && `（${fib.swing_high_date}）`}
           </>
         ) : (
           <>
-            高点 <span className="tabular">{fmtNum(fib.swing_high)}</span>
+            高点 <span className="tabular">{fmtNum(fib.swing_high, decimals)}</span>
             {fib.swing_high_date && `（${fib.swing_high_date}）`} → 低点{" "}
-            <span className="tabular">{fmtNum(fib.swing_low)}</span>
+            <span className="tabular">{fmtNum(fib.swing_low, decimals)}</span>
             {fib.swing_low_date && `（${fib.swing_low_date}）`}
           </>
         )}
@@ -91,12 +94,14 @@ export function FibPanel({
 
       <div className="mt-3 grid grid-cols-2 gap-2">
         <LevelCell
+          decimals={decimals}
           label={up ? "下方支撑" : "下方支撑"}
           level={fib.nearest_support}
           close={close}
           tone="down"
         />
         <LevelCell
+          decimals={decimals}
           label="上方阻力"
           level={fib.nearest_resistance}
           close={close}
@@ -114,7 +119,7 @@ export function FibPanel({
               <span key={l.label} className="tabular text-[var(--muted)]">
                 {l.label}{" "}
                 <span className="font-medium text-[var(--text)]">
-                  {fmtNum(l.price)}
+                  {fmtNum(l.price, decimals)}
                 </span>
               </span>
             ))}
@@ -135,11 +140,13 @@ function LevelCell({
   level,
   close,
   tone,
+  decimals,
 }: {
   label: string;
   level?: { label: string; price: number } | null;
   close?: number | null;
   tone: "up" | "down";
+  decimals: number;
 }) {
   const color = tone === "up" ? "text-[var(--up)]" : "text-[var(--down)]";
   const delta =
@@ -151,7 +158,7 @@ function LevelCell({
       {level ? (
         <>
           <div className={`tabular mt-0.5 text-sm font-medium ${color}`}>
-            {fmtNum(level.price)}
+            {fmtNum(level.price, decimals)}
           </div>
           <div className="tabular text-[10px] text-[var(--muted)]">
             {level.label}

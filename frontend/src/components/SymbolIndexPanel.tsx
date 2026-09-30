@@ -42,6 +42,7 @@ export function SymbolIndexPanel() {
   }, [load]);
 
   const ready = (status?.count ?? 0) > 0;
+  const etfCount = status?.etf_count ?? 0;
 
   return (
     <div className="p-4">
@@ -49,7 +50,11 @@ export function SymbolIndexPanel() {
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium">
-              {status === null ? "读取中…" : ready ? `${status.count} 只股票` : "尚未建立"}
+              {status === null
+                ? "读取中…"
+                : ready
+                  ? `${status.count - etfCount} 只股票${etfCount ? ` · ${etfCount} 只 ETF` : ""}`
+                  : "尚未建立"}
             </span>
             <span
               className={`rounded px-1.5 py-0.5 text-[10px] ${
@@ -69,6 +74,13 @@ export function SymbolIndexPanel() {
             {status?.stale && ready ? " · 已过期，会自动补新股" : ""}
             {status?.refreshing ? " · 正在后台重建" : ""}
           </p>
+          {ready && etfCount === 0 && !status?.refreshing && (
+            // 老版本建的目录里没有 ETF。启动时会自动补；补不上说明 ETF 列表接口不通
+            <p className="mt-1 text-[11px] text-[var(--warn)]">
+              {"目录里还没有 ETF，按名称搜不到 ETF（按代码仍可以）。点右边「重建目录」补上；"}
+              {"重建后仍为 0，去下面的数据源诊断看 ETF 相关几行。"}
+            </p>
+          )}
         </div>
         <button
           type="button"
