@@ -26,9 +26,12 @@
 底层仍然借 akshare 的函数（它已经把这些站点的解析写好了），
 所以需要装 akshare；也同样受益于浏览器指纹那层替换。
 
+**实时价**：新浪的 hq.sinajs.cn 不需要 token、一个请求能取多只，股票和 ETF 都走它
+（见 app/data/sina_hq.py）。东财返回空、雪球要 token 的机器上，盘中价格就靠它。
+
 **ETF**：两个源都能提供 ETF 行情，新浪还能提供 ETF 日线和全部 ETF 列表。
-新浪那张 ETF 列表一个请求就带齐所有 ETF 的实时价，是沪市 ETF 最可靠的来源
-（东财盘口接口会把 5 开头的沪市 ETF 查成深市）。
+ETF 的实时价先走 hq.sinajs.cn，取不到再退回新浪那张"全部 ETF 列表"
+（一个请求带齐所有 ETF 的价格）。
 """
 
 from __future__ import annotations
@@ -39,7 +42,8 @@ from datetime import date
 from typing import Any
 
 from app.core.clock import now_utc
-from app.core.errors import CapabilityNotSupported, ProviderUnavailable
+from app.core.errors import ProviderUnavailable
+from app.data import sina_hq
 from app.data.base import (
     CAP_BARS,
     CAP_ETF_BARS,
@@ -178,12 +182,25 @@ class XueqiuProvider(_AkshareBacked):
 
 
 class SinaProvider(_AkshareBacked):
-    """新浪的日线、大盘指数与全市场列表。主机是 *.sina.com.cn，和东方财富无关。"""
+    """新浪的实时价、日线、大盘指数与全市场列表。主机是 *.sina.com.cn，和东方财富无关。"""
 
     name = "sina"
     capabilities = frozenset(
-        {CAP_BARS, CAP_INDEXES, CAP_SEARCH, CAP_ETF_QUOTE, CAP_ETF_BARS, CAP_ETF_LIST}
+        {
+            CAP_QUOTE,
+            CAP_BARS,
+            CAP_INDEXES,
+            CAP_SEARCH,
+            CAP_ETF_QUOTE,
+            CAP_ETF_BARS,
+            CAP_ETF_LIST,
+        }
     )
+
+    def __init__(self) -> None:
+        super().__init__()
+        # 同一时刻的多只行情合并成一个请求（首页自选股是并发取的）
+        self._hq = sina_hq.Batcher()
 
     #: 首页展示的指数。新浪用的代码前面带市场前缀
     _WANTED_INDEXES = {
@@ -275,9 +292,28 @@ class SinaProvider(_AkshareBacked):
     _ETF_TABLE_TTL = 10
 
     async def quote(self, symbol: Symbol) -> Quote:
-        """ETF 实时行情（从全部 ETF 列表里取一行）。股票不走这里。"""
-        if not symbol.is_etf:
-            raise CapabilityNotSupported("新浪源只提供 ETF 的实时行情")
+        """实时行情。股票和 ETF 都先走 hq.sinajs.cn；ETF 取不到再查全部 ETF 列表。
+
+        hq 那边没有换手率和估值，这几项留空 —— 宁缺毋滥。
+        """
+        hq_error: ProviderUnavailable | None = None
+        try:
+            fields = await self._hq.get(symbol.sina)
+        except ProviderUnavailable as exc:
+            hq_error, fields = exc, None
+        if fields is not None:
+            quote = sina_hq.to_quote(symbol, fields)
+            if quote is not None:
+                return quote
+
+        if symbol.is_etf:
+            return await self._etf_list_quote(symbol)
+        if hq_error is not None:
+            raise hq_error
+        raise ProviderUnavailable(f"新浪实时行情里没有 {symbol.canonical}（可能停牌或已退市）")
+
+    async def _etf_list_quote(self, symbol: Symbol) -> Quote:
+        """从全部 ETF 列表里取一行。hq 接口取不到 ETF 时的退路。"""
         row = (await self._etf_table()).get(symbol.sina)
         if row is None:
             raise ProviderUnavailable(f"新浪 ETF 列表里没有 {symbol.canonical}")

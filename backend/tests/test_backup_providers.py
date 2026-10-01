@@ -263,9 +263,9 @@ def test_capabilities_are_narrow() -> None:
     assert XueqiuProvider().capabilities == {"quote", "etf_quote"}
     # sina 的 search 只给后台建代码目录用（它要翻 60 多页且有封 IP 风险），
     # 请求路径上的搜索查的是本地表。
-    # 它**不**声明股票的 quote：新浪只能给 ETF 实时价（单请求拿全部 ETF），
-    # 股票实时价要翻页，放进请求路径必然超时
+    # 实时价走 hq.sinajs.cn（免 token、批量），股票和 ETF 都声明
     assert SinaProvider().capabilities == {
+        "quote",
         "daily_bars",
         "index_quotes",
         "search",

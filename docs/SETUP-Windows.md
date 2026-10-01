@@ -393,8 +393,8 @@ TUSHARE_TOKEN=你的token
 | 数据源 | 提供 | 主机 |
 | --- | --- | --- |
 | `akshare` | 全部（字段最全） | `push2*.eastmoney.com` |
-| `xueqiu` | 实时行情 | `xueqiu.com` |
-| `sina` | 日线、大盘指数 | `*.sina.com.cn` |
+| `xueqiu` | 实时行情（需 token） | `xueqiu.com` |
+| `sina` | 实时行情（免 token）、日线、大盘指数 | `*.sina.com.cn` |
 | `tushare` | 行情、日线、财报等 | `api.tushare.pro` |
 
 `.env` 里按这个顺序写（v11 起是默认值）：
@@ -403,7 +403,10 @@ TUSHARE_TOKEN=你的token
 DATA_PROVIDER_ORDER=akshare,xueqiu,sina,tushare
 ```
 
-然后 `docker compose up -d`。东财通就用东财，不通就自动落到雪球和新浪 ——
+然后 `docker compose up -d`。东财通就用东财，不通就自动落到雪球和新浪。
+盘中实时价不需要任何 token：雪球没配就由新浪的 `hq.sinajs.cn` 提供 ——
+诊断的主机探测里有这一行，它通了，价格就不会再显示「收盘价（非实时）」。
+
 降级是**按接口**做的，不是整体切换。设置页的「数据源」一节会显示每个维度
 实际由谁提供。
 

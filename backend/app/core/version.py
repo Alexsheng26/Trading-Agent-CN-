@@ -11,4 +11,4 @@
 from __future__ import annotations
 
 #: 与发出去的压缩包版本一致
-APP_VERSION = "v15"
+APP_VERSION = "v16"

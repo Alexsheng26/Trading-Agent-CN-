@@ -17,7 +17,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from app.core.errors import CapabilityNotSupported, DataNotFound, ProviderUnavailable, SymbolError
+from app.core.errors import DataNotFound, ProviderUnavailable, SymbolError
 from app.data.base import CAP_ETF_QUOTE, CAP_QUOTE, Bar, Quote, StockBasic
 from app.data.symbols import normalize
 
@@ -387,11 +387,23 @@ async def test_akshare_refuses_financials_for_etf() -> None:
 # ---------------------------------------------------------------- 新浪 / 雪球
 
 
-def _sina(responses: dict):  # type: ignore[no-untyped-def]
+def _sina(responses: dict, hq_rows: dict | None = None):  # type: ignore[no-untyped-def]
+    """SinaProvider，akshare 调用查表返回；hq.sinajs.cn 也换成假的，绝不联网。
+
+    `hq_rows` 为 None 时 hq 接口什么都没有（模拟它取不到），
+    这样能单独测到"退回全部 ETF 列表"那条路。
+    """
+    from app.data import sina_hq
     from app.data.backup_providers import SinaProvider
 
     provider = SinaProvider()
     calls: list[str] = []
+
+    async def fake_hq(codes):  # type: ignore[no-untyped-def]
+        calls.append("hq:" + ",".join(codes))
+        return {c: v for c, v in (hq_rows or {}).items() if c in codes}
+
+    provider._hq = sina_hq.Batcher(fetcher=fake_hq, window=0)  # type: ignore[attr-defined]
 
     async def fake_call(func_name: str, /, **kwargs):  # type: ignore[no-untyped-def]
         calls.append(func_name)
@@ -420,7 +432,8 @@ def _sina_etf_table():  # type: ignore[no-untyped-def]
 
 
 @requires_pandas
-async def test_sina_etf_quote_from_list() -> None:
+async def test_sina_etf_quote_falls_back_to_list() -> None:
+    """hq 接口取不到这只 ETF 时，退回新浪的全部 ETF 列表。"""
     from app.data.cache import cache
 
     cache.clear()
@@ -428,6 +441,7 @@ async def test_sina_etf_quote_from_list() -> None:
     q = await p.quote(SH_ETF)
     assert (q.name, q.price, q.prev_close, q.change_pct) == ("半导体ETF", 0.873, 0.869, 0.46)
     assert q.pe_ttm is None
+    assert p.calls == ["hq:sh512480", "fund_etf_category_sina"]
 
 
 @requires_pandas
@@ -439,7 +453,7 @@ async def test_sina_etf_table_is_shared_across_quotes() -> None:
     p = _sina({"fund_etf_category_sina": _sina_etf_table()})
     await p.quote(SH_ETF)
     await p.quote(SZ_ETF)
-    assert p.calls == ["fund_etf_category_sina"]
+    assert [c for c in p.calls if not c.startswith("hq:")] == ["fund_etf_category_sina"]
 
 
 @requires_pandas
@@ -454,10 +468,12 @@ async def test_sina_etf_quote_falls_back_to_prev_close() -> None:
 
 
 @requires_pandas
-async def test_sina_does_not_serve_stock_quotes() -> None:
+async def test_sina_stock_quote_never_touches_the_etf_list() -> None:
+    """股票取不到实时价就如实失败，不能去 ETF 列表里瞎找。"""
     p = _sina({})
-    with pytest.raises(CapabilityNotSupported):
+    with pytest.raises(ProviderUnavailable, match="没有 600519.SH"):
         await p.quote(normalize("600519"))
+    assert p.calls == ["hq:sh600519"]
 
 
 @requires_pandas
