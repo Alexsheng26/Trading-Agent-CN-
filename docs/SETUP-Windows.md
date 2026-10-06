@@ -1,539 +1,259 @@
-# Windows 上手指南（Docker 方案）
+# Windows 上手指南（不用 Docker）
 
-从零到能用，大约 15 分钟，其中大部分是等 Docker 下载。
-**全程只需要装一个软件**（Docker Desktop），不用自己装 Python、Node、pnpm。
+直接在 Windows 上跑，浏览器打开就能用。**全程双击脚本，不用敲命令。**
+
+需要电脑上有两样东西：
+
+| 软件 | 要求 | 说明 |
+| --- | --- | --- |
+| Python | 3.11 或更新，64 位 | 3.14 已验证可用。已经装了就不用重装 |
+| Node.js | 18.18 或更新（装长期支持版 LTS 就行） | 前端网页要用 |
+
+> 想用 Docker 的看 [SETUP-Windows-Docker.md](SETUP-Windows-Docker.md)。
+> 不推荐：Docker Desktop 要开 Windows 的虚拟化开关，和 VirtualBox 抢同一个开关。
+> 本方案不碰这个开关，VirtualBox 照常用。
 
 ---
 
-## 第 0 步：装 Docker Desktop
+## 第 0 步：装 Node.js（只装一次）
 
-1. 打开 <https://www.docker.com/products/docker-desktop/>，点 **Download for Windows**
-2. 双击安装，一路下一步。中途会提示需要 **WSL 2**，勾上让它自动装
-3. 装完**重启电脑**（必须重启，否则 WSL 起不来）
-4. 重启后在开始菜单打开 **Docker Desktop**，等左下角的小鲸鱼图标变成绿色 / 显示 `Engine running`
+二选一：
 
-> 每次要用本项目，都得先确认 Docker Desktop 正在运行。它没开，后面的命令会报
-> `error during connect: ... The system cannot find the file specified`。
+- **用命令装**：开始菜单搜「PowerShell」打开，输入下面这行回车，中途弹管理员确认就点「是」：
+  ```powershell
+  winget install OpenJS.NodeJS.LTS
+  ```
+- **手动装**：打开 <https://nodejs.org>，下载 **LTS**（长期支持版）安装包，一路「下一步」。
 
-**验证装好了**：按 `Win + X` → 选 **终端** 或 **PowerShell**，输入：
+装完**不用做别的**。忘了装也没关系：第 2 步的脚本发现没有 Node.js，会问你要不要自动装。
 
-```powershell
-docker --version
-docker compose version
-```
-
-两条都能打印版本号就算成功。
+> Python 还没装的话：<https://www.python.org/downloads/> 下载 3.14，安装第一页
+> **勾上最下面的「Add python.exe to PATH」**。
 
 ---
 
 ## 第 1 步：把项目放到电脑上
 
-我会把项目打包成 zip 发给你（因为 GitHub 推送权限还没开通）。
+1. 下载 zip 后**先别急着解压**：右键 zip → **属性** → 最下面勾上 **「解除锁定」** → 确定。
 
-1. 下载 zip，右键 → **全部解压缩**
-2. 解压到一个**路径里没有中文和空格**的地方，推荐：
-   ```
-   C:\dev\trading-agent-cn
-   ```
-   > 路径带中文或空格时，Docker 挂载目录偶尔会出莫名其妙的问题，躲开省事。
+   > 不做这步，之后每次双击脚本 Windows 都会弹「无法验证发布者」的警告。
+   > 已经解压了也没关系：弹警告时点「运行」，脚本第一次运行后会自己去掉这个标记。
 
-解压后这个文件夹里应该能看到 `docker-compose.yml`、`README.md`、`backend`、`frontend` 这些。
+2. 右键 zip → **全部解压缩**，解压到一个**路径里没有中文和空格**的地方，推荐 `C:\dev\`。
+   解压出来是 `C:\dev\trading-agent-cn`，里面能看到 `start-windows.cmd`、`backend`、`frontend` 这些。
 
-**如果之后 GitHub 权限开通了**，就可以改用（需要先装 Git）：
-
-```powershell
-git clone https://github.com/Alexsheng26/Trading-Agent-CN-.git
-cd Trading-Agent-CN-
-git checkout claude/sleepy-pascal-4uqlk1
-```
+**以前用过 Docker 版、文件夹就在 `C:\dev\trading-agent-cn` 的**：直接解压覆盖。
+你配好的 `.env` 会保留（zip 里不带 `.env`），接 DeepSeek 的配置不用重填。
 
 ---
 
-## 第 2 步：在项目文件夹里打开 PowerShell
+## 第 2 步：双击 `start-windows.cmd`
 
-最快的办法：在**文件资源管理器**里进到项目文件夹，然后
+在项目文件夹里双击 **`start-windows.cmd`**，会打开一个新窗口。
 
-- 在地址栏里把路径删掉，输入 `powershell`，回车
+**第一次**它会先自动安装，屏幕上依次出现：
 
-或者手动：
-
-```powershell
-cd C:\dev\trading-agent-cn
+```
+== [1/5] 配置文件 .env
+== [2/5] Python 和后端依赖        ← 下载 Python 依赖，几分钟
+== [3/5] Node.js
+== [4/5] 前端依赖                 ← 下载前端依赖，几分钟
+== [5/5] 构建前端网页             ← 1 到 3 分钟
 ```
 
-确认位置对不对：
+总共大约 5 到 15 分钟，看网速。装完自动启动，**浏览器会自动打开**
+<http://localhost:3000>，窗口里出现：
 
-```powershell
-dir docker-compose.yml
+```
+  ============================================================
+   Trading-Agent-CN v17 已经启动
+
+   电脑上打开：http://localhost:3000
+   手机上打开（连同一个 Wi-Fi）：http://192.168.1.8:3000
+
+   停止：关掉这个窗口，或者在窗口里按 Ctrl+C
+   用的时候这个窗口要一直开着（可以最小化）
+  ============================================================
 ```
 
-能列出这个文件就说明位置正确。如果报"找不到路径"，说明还没进到项目文件夹。
+**这个窗口就是程序本身**：开着 = 在运行，关掉 = 停止。可以最小化，别关。
+
+中途可能弹出两种提示：
+
+| 弹窗 | 怎么点 |
+| --- | --- |
+| 「Windows 已保护你的电脑」 | 点「更多信息」→「仍要运行」（第 1 步解除锁定了就不会弹） |
+| 「Windows 安全中心」问是否允许 Node.js 访问网络 | **只勾「专用网络」**，点「允许」。只在电脑上用的话点「取消」也不影响 |
+
+以后每次用：**双击 `start-windows.cmd`** 就行，已经装好的部分会自动跳过，几秒就起来。
 
 ---
 
-## 第 3 步：生成配置文件 `.env`
+## 第 3 步：确认跑通了
 
-```powershell
-Copy-Item .env.example .env
-```
+浏览器里应该看到「A股投研助手」。
 
-> ⚠️ **不要用记事本"另存为"来做这一步。** Windows 会偷偷存成 `.env.txt`，
-> 程序读不到。用上面这条命令最稳妥。
->
-> 想确认名字对不对：`dir .env` 应该显示 `.env`，而不是 `.env.txt`。
+- 右上角有黄色的**「离线桩」**标签 = 还没接模型（新装的默认就是这样），按第 4 步配置；
+- 从 Docker 版沿用了 `.env` 的，应该**没有**这个标签，可以直接用。
 
-这一步之后**什么都不用改**，直接进第 4 步。默认配置是"离线体验模式"，
-不需要任何 API Key 就能把整个系统跑起来。
+打开「设置」页，标题旁边应该显示 **`v17 · Windows 原生`**。
 
 ---
 
-## 第 4 步：启动
+## 第 4 步：接真实模型（改 `.env`）
 
-```powershell
-docker compose up -d --build
-```
+`.env` 在项目文件夹的最外层。右键 → **打开方式** → **记事本**。
 
-**第一次会比较久（5-10 分钟）**，它在下载 Python 和 Node 的基础镜像、装依赖。
-屏幕上会滚很多行日志，这是正常的。
-
-看到最后出现类似这样就成功了：
-
-```
-[+] Running 3/3
- ✔ Network trading-agent-cn-_default      Created
- ✔ Container trading-agent-cn--backend-1  Healthy
- ✔ Container trading-agent-cn--frontend-1 Started
-```
-
-**关键点**：必须等 `backend` 变成 `Healthy` 才会启动 `frontend`（这是故意设计的，
-避免前端连上一个还没准备好的后端）。如果卡在 `Waiting`，稍等一下，
-后端首次启动要建数据库表。
-
----
-
-## 第 5 步：打开用
-
-浏览器访问 <http://localhost:3000>
-
-你应该看到「A股投研助手」，右上角有个黄色的**「离线桩」**标签。
-
-试一下完整流程：
-
-1. 在搜索框输入 `600519`，点出来的「贵州茅台」→ 加入自选
-2. 点这只股票 → 进入分析页
-3. 选「波段」→ 点**开始分析**
-4. 看 7 个智能体一个个逐字输出分析（这时你会看到打字机效果），最后出决策面板
-
-> 🔴 **此时的分析内容是假的**：模型是占位模板，行情也是程序生成的模拟数据。
-> 这一步的目的是确认整个系统跑通了。下一步接真模型和真数据。
-
----
-
-## 第 6 步：接真实模型和真实数据
-
-### 6.1 拿一个 Claude API Key
-
-1. 打开 <https://console.anthropic.com>，注册/登录
-2. 左侧 **API Keys** → **Create Key**，复制那串以 `sk-ant-` 开头的字符
-3. Anthropic 是按用量付费的，需要先在 **Billing** 里充一点额度（几美元够跑很多次）
-
-> **一次分析大概花多少？**
->
-> 实测（辩论 2 轮）：一次分析会发起 **10 次模型调用**，输入合计约 **5.5 万字符**，
-> 其中 **78% 是所有智能体共享的行情简报** —— 这部分命中提示缓存后只按 10% 计费，
-> 所以实际成本远低于字符量的直觉估计。
->
-> 按 Claude Opus 5 单价（输入 $5/百万、输出 $25/百万）推算，单次约 **$0.3-0.8**，
-> 波动主要来自模型思考的深度（思考 token 按输出计费）。
->
-> ⚠️ 这是**估算**，不是实测账单 —— 我的开发环境没有 API Key，没法真实调用来核对。
-> 建议你第一次跑完后去 <https://console.anthropic.com> 的 Usage 页面看实际用量，
-> 再决定要不要按 6.4 降配。
-
-### 6.2 改 `.env`
-
-用 VS Code 或记事本打开项目里的 `.env` 文件，找到这几行改掉：
+**用 DeepSeek**，改这几行：
 
 ```ini
-# 原来是 echo，改成 anthropic
+LLM_PROVIDER=openai_compat
+OPENAI_COMPAT_API_KEY=你的key
+OPENAI_COMPAT_BASE_URL=https://api.deepseek.com/v1
+OPENAI_COMPAT_MODEL=deepseek-chat
+```
+
+**用 Claude**，改这两行：
+
+```ini
 LLM_PROVIDER=anthropic
-
-# 填你刚才复制的 Key
-ANTHROPIC_API_KEY=sk-ant-你的key
-
-# 原来是 akshare,tushare,mock，把 mock 去掉，强制用真实数据源
-# （留着 mock 的话，真实数据源挂了会悄悄用假数据，不如直接报错）
-DATA_PROVIDER_ORDER=akshare,tushare
+ANTHROPIC_API_KEY=你的key
 ```
 
-保存。
+保存（`Ctrl+S`）。**然后再双击一次 `start-windows.cmd`** —— 它发现 `.env` 变了，
+会自动停掉旧的、重新启动，不用先手动关窗口。
 
-> AKShare 完全免费、不用注册，能拿行情、K线、财报、新闻、资金流，够用了。
-> `TUSHARE_TOKEN` 可以不填，不填就自动跳过。
+> Key 只填在你自己电脑的 `.env` 里，别发到聊天或截图里。`.env` 不会被打包，也不会上传。
 
-### 6.3 重启让配置生效
-
-```powershell
-docker compose up -d
-```
-
-改 `.env` 不需要加 `--build`（没改代码）。重启后刷新浏览器，
-右上角的「离线桩」标签应该消失了。
-
-到「设置」页面可以确认：模型显示 `claude-opus-5`，数据源里 `akshare` 显示**可用**。
-
-### 6.4 想省钱：让分析师用便宜的模型
-
-在 `.env` 里加一行，让 4 个分析师和辩论用 Sonnet，只有最后的风控和决策用 Opus：
+可选的几项（含义和 [Docker 版指南第 6 步](SETUP-Windows-Docker.md#第-6-步接真实模型和真实数据)
+一样，只是改完是「再双击一次 `start-windows.cmd`」）：
 
 ```ini
-ANTHROPIC_ANALYST_MODEL=claude-sonnet-5
-```
-
-Sonnet 的价格是 Opus 的 40%，而分析师干的是"读数据写结论"这类相对直接的活，
-单次成本能降到 $0.2-0.3 左右。
-
-还想再省，最简单的是在分析页把「分析深度」选成**快速**（辩论只跑 1 轮）——
-按次选，重要的票再切回标准或深度。想让所有分析默认都少跑几轮，就改标准档的轮数
-（默认 2 轮，每轮多空各发言一次；快速档 = min(1, 它)，深度档 = 它 + 1）：
-
-```ini
+# DeepSeek 的「深度」档：风控和决策两步改用推理模型
+OPENAI_COMPAT_REASONING_MODEL=deepseek-reasoner
+# 分析页「高级」里能手选的模型（逗号分隔）
+LLM_MODEL_CHOICES=deepseek-chat,deepseek-reasoner
+# 标准档的辩论轮数，调小更快更省
 DEBATE_ROUNDS=1
 ```
 
-### 6.5 用 DeepSeek 时让「深度」档真正加码
-
-DeepSeek 这类兼容接口没有 Claude 的「推理投入」参数，所以默认情况下深度档只比
-标准档多一轮辩论。配上推理模型后，深度档的风控和决策两步会改用它：
-
-```ini
-OPENAI_COMPAT_REASONING_MODEL=deepseek-reasoner
-```
-
-模型名以 DeepSeek 文档为准。改完执行 `docker compose up -d`，
-分析页选「深度」时说明文字里会出现「风控与决策改用 deepseek-reasoner」。
-
-想在分析页「高级」里手选别的模型，把名字加到这里（逗号分隔，只接受列表里的）：
-
-```ini
-LLM_MODEL_CHOICES=deepseek-chat,deepseek-reasoner
-```
-
 ---
 
-## 第 7 步：装到手机上
+## 第 5 步：在手机上用
 
-1. 手机和电脑连**同一个 Wi-Fi**
-
-2. 查电脑的局域网 IP：
-   ```powershell
-   ipconfig
-   ```
-   找 **"无线局域网适配器 WLAN"** 下面的 **IPv4 地址**，
-   通常长这样：`192.168.1.8` 或 `192.168.0.123`
-
-3. **在防火墙放行 3000 端口**（Windows 默认会拦掉局域网访问）。
-   以**管理员身份**打开 PowerShell（右键开始菜单 → **终端(管理员)**），执行：
-   ```powershell
-   New-NetFirewallRule -DisplayName "Trading Agent CN" -Direction Inbound -LocalPort 3000 -Protocol TCP -Action Allow
-   ```
-   > 只放行 3000 就够 —— 手机只访问前端，后端是由前端在服务端内部转发的。
-   >
-   > 想撤销：`Remove-NetFirewallRule -DisplayName "Trading Agent CN"`
-
-4. 手机浏览器打开 `http://192.168.1.8:3000`（换成你自己的 IP）
-
-5. 添加到主屏幕：
-   - **iPhone**：必须用 **Safari** 打开 → 底部**分享**按钮 → 往下滑找到**添加到主屏幕**
+1. 手机和电脑连**同一个 Wi-Fi**。
+2. 手机浏览器打开窗口里那行「手机上打开」的地址，比如 `http://192.168.1.8:3000`。
+3. 添加到主屏幕：
+   - **iPhone**：用 **Safari** 打开 → 底部**分享** → **添加到主屏幕**
    - **Android**：用 **Chrome** 打开 → 右上角**三个点** → **安装应用** / **添加到主屏幕**
 
-装好后从主屏图标打开就是全屏的，没有浏览器地址栏，和原生 App 一样。
+**手机打不开**，按顺序查：
 
-> 分析跑到一半锁屏、切到微信、或者进地铁断网都没关系 —— 分析在电脑上继续跑，
-> 你回来时进度会自动接上。这是刻意设计的，不是碰巧。
+1. 电脑上能打开 `http://那个地址:3000` 吗？不能就是地址不对，用窗口里显示的那个。
+2. **家里的 Wi-Fi 要设成「专用网络」**：设置 → 网络和 Internet → WLAN → 点你连的网络 →
+   「网络配置文件类型」选**专用网络**。（Windows 默认把新网络当「公用」，公用网络上防火墙会拦。）
+3. 第 2 步的防火墙弹窗点了「取消」？以**管理员身份**打开 PowerShell（右键开始菜单 →
+   **终端(管理员)**），执行：
+   ```powershell
+   New-NetFirewallRule -DisplayName "Trading Agent CN" -Direction Inbound -LocalPort 3000 -Protocol TCP -Action Allow -Profile Private
+   ```
+   想撤销：`Remove-NetFirewallRule -DisplayName "Trading Agent CN"`
+4. 路由器的「访客网络」会隔离设备，手机别连访客网络。
+
+> ⚠️ **本工具没有登录密码**：谁能打开这个网页，谁就能用，包括花你的模型 API 额度。
+> 所以防火墙只放行「专用网络」—— 在学校、咖啡店这类公用网络上，别人就访问不到它。
+> 不要把 3000 端口在公用网络上放开。
 
 ---
 
 ## 日常使用
 
-```powershell
-# 启动（每天用之前，先确保 Docker Desktop 开着）
-docker compose up -d
+| 想做什么 | 怎么做 |
+| --- | --- |
+| 启动 | 双击 `start-windows.cmd` |
+| 停止 | 关掉那个窗口（或者在窗口里按 `Ctrl+C`） |
+| 改了 `.env` 让它生效 | 再双击一次 `start-windows.cmd`（会自动重启） |
+| 更新到新版本 | 关掉窗口 → 新 zip 解压**覆盖到同一个文件夹** → 双击 `start-windows.cmd`（缺什么自动补装，前端自动重新构建） |
+| 装出问题了，重新装一遍 | 双击 `setup-windows.cmd` |
+| 提示端口被占用 / 窗口找不到了停不掉 | 双击 `stop-windows.cmd` |
 
-# 停止
-docker compose down
+### 数据存在哪
 
-# 看日志（排查问题时用，Ctrl+C 退出）
-docker compose logs -f
+自选股和历史分析记录都在 `backend\data\` 里（`trading_agent.db`，旁边可能还有
+`-wal`、`-shm` 两个文件，正常现象）。要备份：**先关掉窗口**，再把整个 `backend\data`
+文件夹复制走。更新版本时解压覆盖不会动它。
 
-# 只看后端日志
-docker compose logs -f backend
+> 从 Docker 版换过来的：Docker 版的数据存在 Docker 自己的数据卷里，这里读不到，
+> 自选股需要重新加一遍。
 
-# 改了代码后重新构建
-docker compose up -d --build
-```
+### 不用 Docker 之后
 
-### 看 ETF
-
-ETF 和股票用法一样：搜 `512480` 或「半导体」都能出来，可以加自选、跑分析。
-ETF 的分析页没有市盈率，换成「规模」，下面多一块「ETF 概况」（跟踪标的、费率、
-前十大重仓股）。
-
-从旧版本升级上来后，启动时会自动把 ETF 补进本地代码目录（要一两分钟）。
-「设置 → 股票代码目录」那一栏会显示「N 只股票 · M 只 ETF」；如果 ETF 一直是 0，
-点「重建目录」，还是 0 就看数据源诊断里带「ETF」的几行。
+Docker Desktop 可以在「设置 → 应用」里卸载。不想卸也行，至少别让它开机自启
+（任务管理器 → 启动应用 → Docker Desktop → 禁用）—— 它开着的时候，旧容器会占用
+3000 / 8000 端口，`start-windows.cmd` 会提示端口被占用。
 
 ---
 
 ## 遇到问题怎么办
 
-### `error during connect` / `cannot find the file specified`
-Docker Desktop 没启动。开始菜单打开它，等小鲸鱼变绿。
+先看那个窗口：出错时脚本会停下来，用红字写明原因和下一步该做什么，
+**按回车之前窗口不会关**。需要求助时，把整个窗口截图发出来最有用。
 
-### 浏览器打开 localhost:3000 显示"无法访问"
-先看容器状态：
-```powershell
-docker compose ps
-```
-- `frontend` 不在列表里或状态是 `Exited` → 看日志：`docker compose logs frontend`
-- `backend` 状态一直是 `starting` → 等 30 秒，它在建数据库表
-- 都 `Up` 但打不开 → 试试 <http://127.0.0.1:3000>
+### 安装卡在「找不到 Python」
 
-### ⚠️ 升级到 v8 后必须改一下 `.env`
+窗口里会列出找到了哪些 Python、为什么跳过（版本太旧、32 位等）。
+确认装的是 64 位的 3.11 或更新版本；装的时候没勾「Add python.exe to PATH」也能找到
+常见安装位置，找不到就重装一次并勾上它。
 
-早期版本的 `.env.example` 里写的是：
+### 装好了 Node.js 还是提示找不到
 
-```
-DATA_PROVIDER_ORDER=akshare,tushare,mock
-```
+刚装完的程序，已经开着的窗口看不到。**关掉窗口，重新双击**就好。
 
-**请把末尾的 `mock` 删掉**，改成：
+### 安装依赖失败（pip / pnpm 报错）
 
-```
-DATA_PROVIDER_ORDER=akshare,tushare
-```
+脚本会先从官方源下载，失败了自动换国内镜像（清华 / npmmirror）再试一次。
+两次都失败一般是网络问题：
 
-然后 **`docker compose up -d`**。
+- 开着代理软件的话，先关掉或切到「规则模式」再试；
+- 换个网络（比如手机热点）再双击 `start-windows.cmd`，已经装好的部分不会重下。
 
-> ⚠️ **不要用 `docker compose restart`。** 它只是重启现有容器，
-> **不会重新读取 `.env`** —— 你改了文件但容器里的环境变量还是旧的，
-> 看起来什么都没发生。`up -d` 会检测到配置变化并重建容器。
-> 改完怎么确认生效：打开设置页点「开始探测」，最上面那行「尝试顺序」
-> 里不该再出现 mock。
+### 提示「端口 8000 / 3000 被占用」
 
-为什么：`mock` 是程序生成的**假行情**。真实数据源取不到时会自动降级到它，
-于是界面上会出现"模拟股份741 / 299.42"这种东西，AI 还会基于这个假价格
-给出一整套止盈止损点位，看起来和真的一模一样 —— 在一个输出买卖点位的工具里
-这非常危险。删掉之后，取不到真数据就会明确报错并说出原因，绝不编数字。
+提示里会写是哪个程序占的：
 
-（新装的用户不用管这条，新的 `.env.example` 里已经不含 mock。）
+- 是 Docker（`com.docker.backend`、`wslrelay` 之类）：退出 Docker Desktop；
+- 是上次没关干净的本工具：双击 `stop-windows.cmd`；
+- 都不是：关掉那个程序，或者重启电脑。
 
-### 搜索不出结果 / 价格明显是假的 —— 先跑数据源诊断
-打开 **设置页**，用两个自助工具，不用翻日志：
+### 网页打不开 / 一直转圈
 
-1. **股票代码目录**：显示"按名称搜索可用"就说明按名字搜没问题。显示"尚未建立"，
-   就是按名称搜不出结果的直接原因 —— 点「重建目录」，它会当场告诉你成功还是失败。
-2. **数据源诊断** → 点「开始探测」：它会真的去调用每个数据源的每个接口，
-   逐项列出 `正常 / 空结果 / 失败 / 超时`，失败的还会给出原因，
-   底部还有一句"接下来该做什么"。
-
-常见结论：
-
-| 诊断结果 | 含义与处理 |
-| --- | --- |
-| 只有 `mock` 一个源 | 界面上的价格全是程序生成的假数据。在 `.env` 里设 `DATA_PROVIDER_ORDER=akshare,tushare` 后重启 |
-| akshare 各接口 `失败`，原因带 403 / timeout / ConnectionError | 上不去东方财富的接口。检查代理软件、公司网络、防火墙；或直接换 Tushare（见下） |
-| akshare 只有「搜索」`超时`，其余正常 | **这是正常的**。全市场列表接口天生要 60-90 秒（要翻 54 页、每页还 sleep 1 秒），诊断给它的预算只有 12 秒。按名称搜索不靠它实时取数，靠后台建好的本地代码目录 —— 看「股票代码目录」那一栏显示多少只股票即可 |
-| akshare「实时行情」`失败` | 这个是单只股票的盘口接口（单请求、很快），它失败就是真的连不上 push2.eastmoney.com |
-| akshare `超时`（除搜索以外的接口） | 对方限流或改版。AKShare 是抓网页的，这种情况会反复出现 —— 建议换 Tushare |
-| 全部 `正常` | 数据是真的，界面上顶部那条"模拟数据"警告条也应该消失了 |
-
-**换 Tushare 更省心**：它是正式 API 而不是抓网页，稳定得多。去 <https://tushare.pro>
-免费注册拿 token，然后在 `.env` 里：
-
-```
-DATA_PROVIDER_ORDER=tushare,akshare,mock
-TUSHARE_TOKEN=你的token
-```
-
-然后 `docker compose up -d`（**不是 restart** —— restart 不重新读 `.env`），
-回设置页再跑一次诊断确认。
-
-> 顺带说明：Tushare 没有个股新闻接口，新闻那一项会自动落到 AKShare ——
-> 逐接口降级是设计好的，不影响其他维度。
-
-另一个更硬的判断方法：访问 <http://localhost:8000/api/v1/status> 看 `using_mock_data`，
-`true` 就说明至少有一个维度用的是假数据。
-
-### 诊断页现在会自己告诉你结论
-
-点「开始探测」后，从上往下看三样东西：
-
-1. **后端版本 + 浏览器指纹状态** —— 先确认跑的是你刚装的那一版、
-   指纹伪装有没有生效。（版本号也显示在「设置与状态」标题旁边。）
-2. **主机可达性** —— 每个域名用普通 requests 和浏览器指纹**各打一次**：
-
-   | 两次结果 | 含义 | 怎么办 |
-   | --- | --- | --- |
-   | 都正常 | 该主机没问题 | 问题在接口层面，看下面的逐接口结果 |
-   | 只有普通 requests 失败 | 被按客户端指纹拦了 | 开着 `AKSHARE_BROWSER_TRANSPORT=true` 就行 |
-   | 都失败 | **这台机器连不上这个域名** | 查代理/防火墙，或换用能通的数据源 |
-
-   表格下面会直接给一句结论，包含可以照抄的 `DATA_PROVIDER_ORDER`。
-3. **逐接口结果**，以及最底下一句"所以数据是真的还是假的"。
-
-### 东方财富连不上，但雪球/新浪能通 —— 换数据源就行
-
-这是最常见的一种情况：`push2*.eastmoney.com` 这一组主机在部分网络下不可达
-（代理软件、公司网络、个别运营商线路），而同域名下的 `search-api-web`
-和其他站点却是通的。
-
-本项目内置了**主机互不相同**的备份源：
-
-| 数据源 | 提供 | 主机 |
-| --- | --- | --- |
-| `akshare` | 全部（字段最全） | `push2*.eastmoney.com` |
-| `xueqiu` | 实时行情（需 token） | `xueqiu.com` |
-| `sina` | 实时行情（免 token）、日线、大盘指数 | `*.sina.com.cn` |
-| `tushare` | 行情、日线、财报等 | `api.tushare.pro` |
-
-`.env` 里按这个顺序写（v11 起是默认值）：
-
-```
-DATA_PROVIDER_ORDER=akshare,xueqiu,sina,tushare
-```
-
-然后 `docker compose up -d`。东财通就用东财，不通就自动落到雪球和新浪。
-盘中实时价不需要任何 token：雪球没配就由新浪的 `hq.sinajs.cn` 提供 ——
-诊断的主机探测里有这一行，它通了，价格就不会再显示「收盘价（非实时）」。
-
-降级是**按接口**做的，不是整体切换。设置页的「数据源」一节会显示每个维度
-实际由谁提供。
-
-### 诊断里只有「个股新闻」正常，其余全是「对方直接掐断连接」
-
-失败原因长这样：
-
-```
-('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
-```
-
-**这不是超时，也不是没网。** 是对方在 TLS 握手层面拒绝了普通 Python 客户端：
-akshare 里唯一用 `curl_cffi`（会模拟真实 Chrome 的指纹）取数的接口就是个股新闻，
-其余都用普通 `requests` —— 一个能通、其余全挂，正好对应上。
-
-本项目现在默认开启浏览器指纹伪装（`AKSHARE_BROWSER_TRANSPORT=true`），
-只换运输层、不动 akshare 的字段解析。升级后重新探测即可。
-
-如果开着还是全部掐断，说明是**本机网络层面**的问题，按这个顺序查：
-
-1. 代理软件 / VPN：很多代理会拦或重置对 `push2.eastmoney.com` 的连接，
-   试试关掉再探测；
-2. 安全软件、公司网络、校园网的出口策略；
-3. 想单独验证到底是客户端还是网络的问题，跑这一条命令（两种客户端各打一次）：
-
-```powershell
-docker compose exec backend python -c "import requests; from curl_cffi import requests as c; u='https://push2.eastmoney.com/api/qt/stock/get'; p={'fltt':'2','invt':'2','fields':'f43,f58,f60','secid':'0.300741'}; [print(n, end=': ') or (lambda f: print(f()))(g) for n, g in [('普通requests', lambda: requests.get(u,params=p,timeout=10).text[:100]), ('curl_cffi', lambda: c.get(u,params=p,timeout=10,impersonate='chrome').text[:100])]]"
-```
-
-两个都失败 = 网络问题；只有普通 requests 失败 = 指纹拦截，开着伪装就行。
-
-### 价格不自动刷新 / 一直显示"已收盘"
-这通常是**对的**：A股交易时间是周一至周五 09:15-09:25（集合竞价）、09:30-11:30、
-13:00-15:00（北京时间）。非交易时段前端会刻意**完全不刷新** —— 收盘后每 5 秒拉一次
-价格毫无意义，还会把免费数据源打得更快挂掉。此时头部会显示"已收盘 · 距开盘 X 小时"。
-
-盘中还是不刷新，按这个顺序查：
-- 头部徽标显示的是什么？「连续竞价 · 5 秒自动刷新」+ 一个呼吸的小圆点 = 正在轮询
-- 切到别的标签页或锁屏时会**暂停**轮询（省电），回到前台会立刻补一次
-- 访问 <http://localhost:8000/api/v1/market/session> 看后端判断的时段对不对。
-  若明明是盘中却显示"已收盘"，看 `as_of` 这个时间对不对 ——
-  它是后端算出的北京时间，用的是固定 UTC+8，不依赖容器时区，正常不会错
-- 法定节假日会被当成交易日（没接交易日历），表现是"显示交易中但价格不动"，属已知取舍
-
-### 分析一直转圈不出结果
-```powershell
-docker compose logs -f backend
-```
-常见原因：
-- `Claude 鉴权失败` → `ANTHROPIC_API_KEY` 填错了，或者 Anthropic 账户没充值
-- `触发 Claude 速率限制` → 新账户额度低，在 `.env` 里设 `DEBATE_ROUNDS=1` 降低并发
-- `分析超时` → 先试分析页的「快速」档；还不行就在 `.env` 里把 `ANALYSIS_TIMEOUT`
-  调大，比如 `900`（这是标准档的值，深度档自动放宽到 1.5 倍）
-
-### 构建前端时报 `pnpm install --frozen-lockfile` 失败
-如果报错里提到 `minimumReleaseAge` 或 `the active policies reject`，说明你的 pnpm
-版本比 lockfile 的生成版本新，新版有个"拒绝刚发布不久的包"的供应链策略。
-
-本项目已经在 `frontend/package.json` 里钉住了 `packageManager: pnpm@10.33.0`，
-Docker 构建会自动用这个版本，正常不该再遇到。若还是遇到：
-
-```powershell
-# 让 Docker 不用缓存重新构建前端
-docker compose build --no-cache frontend
-docker compose up -d
-```
-
-实在不行，重建 lockfile（需要本机装 Node 和 pnpm）：
-```powershell
-cd frontend
-pnpm clean --lockfile
-pnpm install
-cd ..
-docker compose up -d --build
-```
+1. 那个窗口还开着吗？关了就是停了，双击 `start-windows.cmd`。
+2. 窗口最下面有没有红色的报错（`Traceback`、`Error`）？截图。
+3. 窗口标题开头变成了「选择」？那是不小心在窗口里点出了选择状态，**按一下 `Esc`**。
+   （脚本已经关掉了这个窗口的「快速编辑」，正常不会出现。）
 
 ### `.env` 改了没生效
-- 确认文件名是 `.env` 不是 `.env.txt`：`dir .env`
-- 确认改完执行了 `docker compose up -d`
-- 用 `docker compose config` 看 Compose 实际读到的值对不对
 
-### 手机访问不了
-按顺序排查：
-1. 电脑上能不能开 `http://<电脑IP>:3000`？不能 → IP 查错了
-2. 防火墙规则加了吗？（第 7 步第 3 小步）
-3. 手机和电脑真的在同一个 Wi-Fi 吗？（注意有些路由器的访客网络会隔离设备）
+- 文件名必须是 `.env`，不能是 `.env.txt`（安装脚本发现 `.env.txt` 会自动改名）；
+- 改完要**再双击一次 `start-windows.cmd`**；
+- 用记事本「另存为」时编码要选 **UTF-8**。存成别的编码，启动脚本会直接提示你。
 
-### 想彻底清掉重来
-```powershell
-docker compose down
-docker compose up -d --build
-```
+### 开着代理软件（VPN / Clash 等）时数据取不到
 
-这样重建镜像但**保留数据**（自选股、历史分析记录）。
+不用 Docker 之后，后端访问数据源会受 Windows「系统代理」影响。
+如果「设置 → 数据源诊断」里大面积失败：把代理切到**规则模式**（国内网站直连），
+或者先关掉「系统代理」，再到诊断页重新探测。
 
-连数据一起清空：
-```powershell
-docker compose down -v
-docker compose up -d --build
-```
-`-v` 会删掉存数据的命名卷，自选股和历史分析全部清空，不可恢复。
+### 数据源、搜索、分析超时这类问题
 
-### 想备份数据 / 看一眼数据库文件
+打开「设置 → 数据源诊断」，点「开始探测」，它会逐项告诉你哪里不通、该怎么办。
+常见情况的详细说明见 [Docker 版指南的「遇到问题怎么办」](SETUP-Windows-Docker.md#遇到问题怎么办)，
+两种跑法通用 —— 把里面的 `docker compose up -d` 换成「再双击一次 `start-windows.cmd`」。
 
-数据存在 Docker 的**命名卷**里，不在项目文件夹中（这是故意的：Windows 上
-把宿主目录挂进 Linux 容器要过一层文件系统转换，SQLite 的文件锁在那层上
-容易出问题）。要取出来：
+### 实在不行，从头装一遍
 
-```powershell
-# 先停后端：SQLite 开了 WAL 模式，运行中最近的写入可能还在 -wal 文件里，
-# 只拷 .db 会丢掉那部分
-docker compose stop backend
-docker compose cp backend:/app/data/trading_agent.db .\backup.db
-docker compose start backend
-```
-
-放回去：
-```powershell
-docker compose stop backend
-docker compose cp .\backup.db backend:/app/data/trading_agent.db
-docker compose start backend
-```
-
-> 为什么是 WAL：本工具会在后台建"全市场代码-名称目录"（按名称搜索靠它），
-> 那是一次 5000 多行的写入，同时前端还在读。默认的日志模式下写会把读全挡住，
-> 随机报 `database is locked`；WAL 下读写互不阻塞。
-> 代价是数据库旁边会多出 `-wal` 和 `-shm` 两个文件，属正常现象。
+关掉窗口，删掉这几个文件夹：`backend\.venv`、`frontend\node_modules`、`frontend\.next`、`.run`，
+再双击 `start-windows.cmd`。`.env` 和 `backend\data` 里的数据不受影响。
 
 ---
 

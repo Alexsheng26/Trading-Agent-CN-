@@ -380,6 +380,7 @@ async def diagnose() -> dict:
                 )
         out.append(entry)
 
+    from app.core.runtime import current_runtime, restart_hint  # noqa: PLC0415
     from app.core.version import APP_VERSION  # noqa: PLC0415
     from app.data.browser_transport import is_enabled  # noqa: PLC0415
     from app.services.host_probe import probe_hosts  # noqa: PLC0415
@@ -401,6 +402,9 @@ async def diagnose() -> dict:
         "checked_at": session_state().as_of.isoformat(),
         # 版本写进结果里：用户截图一发过来就知道跑的是哪一版，不用反推
         "app_version": APP_VERSION,
+        # 诊断给出的"改完 .env 之后"那一步，按运行方式写（不能对 Windows 用户说 docker 命令）
+        "runtime": current_runtime(settings),
+        "restart_hint": restart_hint(settings),
         "transport": {
             "browser_impersonation": settings.akshare_browser_transport,
             "impersonate": settings.akshare_impersonate,

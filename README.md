@@ -23,8 +23,10 @@ make dev
 
 打开 <http://localhost:3000>，整条链路（数据 → 智能体 → 决策 → 界面）立刻可跑。
 
-> **Windows 用户**：`make` 命令默认不存在，请按
-> [docs/SETUP-Windows.md](docs/SETUP-Windows.md) 走 Docker 方案（更省事）。
+> **Windows 用户**：不用 `make`，也不用 Docker —— 装好 Python 和 Node.js 后，
+> 双击项目里的 **`start-windows.cmd`** 就行（第一次会自动安装）。
+> 详见 [docs/SETUP-Windows.md](docs/SETUP-Windows.md)；
+> 想用 Docker 的看 [docs/SETUP-Windows-Docker.md](docs/SETUP-Windows-Docker.md)。
 
 **离线桩模式**下用的是模板化的占位分析和程序生成的模拟行情，**结论无任何参考价值**，作用是让你先看清系统长什么样。要跑真实分析，编辑 `.env`：
 
@@ -34,7 +36,8 @@ ANTHROPIC_API_KEY=sk-ant-...          # https://console.anthropic.com
 DATA_PROVIDER_ORDER=akshare,tushare   # AKShare 免费免注册，够用
 ```
 
-重启后端即可。Docker 用户可以直接 `make docker`。
+重启后端即可（Windows 一键脚本：再双击一次 `start-windows.cmd`，它发现 `.env` 变了会自动重启）。
+Docker 用户可以直接 `make docker`。
 
 ### 在手机上用
 
@@ -47,8 +50,9 @@ DATA_PROVIDER_ORDER=akshare,tushare   # AKShare 免费免注册，够用
 
 > 不需要改 `CORS_ORIGINS`。浏览器只访问前端（`:3000`），由 Next 在**服务端**
 > 代理到后端，浏览器从不直接请求 `:8000`，因此不涉及跨域。
-> Windows 用户可能需要在防火墙里放行 3000 端口，见
-> [docs/SETUP-Windows.md](docs/SETUP-Windows.md)。
+> Windows 用户第一次启动时会弹防火墙提示，只勾「专用网络」放行即可，见
+> [docs/SETUP-Windows.md](docs/SETUP-Windows.md)。本工具没有登录密码，
+> 不要在公用网络上放开 3000 端口。
 
 ---
 
@@ -258,7 +262,7 @@ backend/
     services/      技术指标、快照组装、分析任务、SSE 事件缓冲
     api/v1/        HTTP 接口
     db/            SQLAlchemy 模型与会话
-  tests/           89 个测试，全部离线跑（不联网、不花钱）
+  tests/           全部离线跑（不联网、不花钱、不需要 API Key）
 
 frontend/
   src/
@@ -266,6 +270,9 @@ frontend/
     components/    外壳、智能体卡片、决策面板、K线图、搜索
     lib/           API 客户端、SSE Hook、格式化
   public/          PWA manifest、Service Worker、图标
+
+scripts/windows/   Windows 原生运行（不用 Docker）：安装 / 启动 / 停止，
+                   由根目录的 setup-windows.cmd、start-windows.cmd、stop-windows.cmd 调用
 ```
 
 ---
@@ -275,11 +282,14 @@ frontend/
 ```bash
 make setup          # 安装依赖
 make dev            # 前后端一起起
-make test           # 跑后端测试（89 个，约 2 秒）
+make test           # 跑后端测试（全部离线，十几秒）
 make lint           # ruff + tsc
 make docker         # docker compose 一键起全套
 cd frontend && pnpm icons   # 改了 icon.svg 后重新生成 PWA 图标
 ```
+
+Windows（不用 Docker）：双击 `start-windows.cmd` 启动（缺什么先自动装），
+关掉它打开的窗口就是停止；`setup-windows.cmd` 重装 / 修复，`stop-windows.cmd` 清理残留进程。
 
 接口文档：<http://localhost:8000/docs>
 

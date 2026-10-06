@@ -18,6 +18,7 @@ from app.agents.orchestrator import AnalysisOrchestrator, Event
 from app.agents.profile import Depth, RunProfile, resolve_profile
 from app.core.clock import now_utc
 from app.core.config import get_settings
+from app.core.runtime import restart_hint
 from app.db.models import AgentOutputRow, AnalysisRun
 from app.db.session import get_sessionmaker
 from app.llm.factory import get_llm
@@ -121,7 +122,7 @@ class AnalysisService:
         except TimeoutError:
             error = (
                 f"分析超时（超过 {timeout} 秒）。可以改用“快速”档，"
-                "或在 .env 里调大 ANALYSIS_TIMEOUT 后执行 docker compose up -d"
+                f"或在 .env 里调大 ANALYSIS_TIMEOUT，然后{restart_hint()}"
             )
             log.warning("run %s %s", run_id, error)
             buffer.append(Event("error", {"run_id": run_id, "message": error}))

@@ -41,6 +41,8 @@ export interface AnalysisOptions {
   /** 可手选的模型（白名单）。少于 2 个时前端不显示选择器 */
   models: { value: string; note: string }[];
   notes: string[];
+  /** 改完 .env 之后怎么让它生效（按运行方式：Docker / Windows 一键脚本 / 开发模式） */
+  restart_hint?: string;
 }
 
 export interface StockBasic {
@@ -246,6 +248,10 @@ export interface TransportStatus {
 export interface Diagnosis {
   /** 后端版本号。排查时先确认跑的是哪一版 */
   app_version?: string;
+  /** 运行方式：docker / windows / dev */
+  runtime?: string;
+  /** 改完 .env 之后怎么让它生效，是能直接接在"然后"后面的短句 */
+  restart_hint?: string;
   transport?: TransportStatus;
   hosts?: HostResult[];
   host_summary?: string;
@@ -341,6 +347,9 @@ export interface WatchlistItem {
 export interface SystemStatus {
   app_env: string;
   app_version?: string;
+  /** 运行方式：docker / windows / dev */
+  runtime?: string;
+  restart_hint?: string;
   transport?: TransportStatus;
   /** 各维度最近一次实际命中的数据源。healthcheck 只说明依赖装好了，这个才是地面真相 */
   active_sources?: Record<string, string>;

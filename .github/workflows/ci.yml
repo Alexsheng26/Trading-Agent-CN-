@@ -97,3 +97,67 @@ jobs:
       - name: Build
         working-directory: frontend
         run: pnpm build
+
+  # Windows 原生一键脚本（scripts/windows）在真实 Windows + 系统自带的 Windows PowerShell 5.1
+  # 上完整走一遍：双击入口 → 安装 → 启动 → 经前端访问后端 → 停止。
+  # 开发环境是 Linux，这些脚本里调 Windows 自身的部分（taskkill、cmd、端口查询）只有这里能真跑。
+  windows-native:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      # 只验证脚本本身：不连行情网站、不用真模型（环境变量优先于 .env）
+      DATA_PROVIDER_ORDER: mock
+      SYMBOL_INDEX_AUTOREFRESH: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      # 和用户一样从 .cmd 进去：顺带验证 %~dp0、引号和 CRLF。< NUL 让末尾的 pause 直接过去
+      - name: 安装（setup-windows.cmd）
+        shell: cmd
+        run: setup-windows.cmd < NUL
+      - name: 确认安装完整
+        shell: powershell
+        run: |
+          foreach ($f in 'backend\.venv\Scripts\python.exe', 'frontend\.next\BUILD_ID', '.env') {
+            if (-not (Test-Path $f)) { throw "安装后缺少 $f" }
+          }
+      - name: 启动 → 经前端访问后端 → 再次启动 → 停止
+        shell: powershell
+        run: |
+          $log = "$env:RUNNER_TEMP\start.log"
+          $start = Start-Process powershell.exe -PassThru -RedirectStandardOutput $log -ArgumentList @(
+            '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+            '-File', "$PWD\scripts\windows\start.ps1", '-NoBrowser')
+          try {
+            $status = $null
+            for ($i = 0; $i -lt 90 -and -not $start.HasExited; $i++) {
+              try {
+                $status = Invoke-RestMethod -TimeoutSec 5 http://127.0.0.1:3000/api/v1/status
+                break
+              } catch { Start-Sleep -Seconds 2 }
+            }
+            if (-not $status) { throw '启动失败：前端 3000 端口一直访问不到' }
+            if ($status.runtime -ne 'windows') { throw "runtime 应为 windows，实际是 $($status.runtime)" }
+
+            # 已经在运行时再启动一次：应当直接返回，不动正在运行的实例
+            & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\windows\start.ps1 -NoBrowser
+            if ($LASTEXITCODE -ne 0) { throw "第二次启动退出码 $LASTEXITCODE" }
+            if ($start.HasExited) { throw '第二次启动把正在运行的实例弄停了' }
+
+            & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\windows\stop.ps1
+            Start-Sleep -Seconds 3
+            foreach ($port in 3000, 8000) {
+              if (Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue) {
+                throw "停止后端口 $port 还在监听"
+              }
+            }
+            if (-not $start.HasExited) { throw '停止后启动窗口还在' }
+          } finally {
+            Write-Host '----- start.ps1 输出 -----'
+            if (Test-Path $log) { Get-Content $log }
+          }

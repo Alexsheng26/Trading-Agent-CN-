@@ -12,6 +12,8 @@ services:
       # 两种语义混用会让人搞不清数据库到底落在哪。
       # 要换 Postgres，在 .env 里设 DOCKER_DATABASE_URL 覆盖这一项。
       DATABASE_URL: ${DOCKER_DATABASE_URL:-sqlite+aiosqlite:////app/data/trading_agent.db}
+      # 让后端的提示按 Docker 的方式写（"改完 .env 执行 docker compose up -d"）
+      APP_RUNTIME: docker
     volumes:
       # 用命名卷而不是 ./data 目录挂载。
       # 原因：Windows 上 Docker Desktop 把宿主目录挂进 Linux 容器要经过一层

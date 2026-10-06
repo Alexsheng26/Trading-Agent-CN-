@@ -8,6 +8,12 @@ import { SymbolIndexPanel } from "@/components/SymbolIndexPanel";
 import { api } from "@/lib/api";
 import type { SystemStatus } from "@/lib/types";
 
+const RUNTIME_LABELS: Record<string, string> = {
+  docker: "Docker",
+  windows: "Windows 原生",
+  dev: "开发模式",
+};
+
 export default function SettingsPage() {
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -25,7 +31,8 @@ export default function SettingsPage() {
         <div className="rounded-xl bg-[var(--up-soft)] px-4 py-3 text-sm text-[var(--up)]">
           {error}
           <p className="mt-2 text-xs text-[var(--muted)]">
-            确认后端已启动：<code>uvicorn app.main:app --port 8000</code>
+            确认后端已启动：Windows 上双击 <code>start-windows.cmd</code>，看它打开的窗口里有没有报错；{""}
+            Docker 用 <code>docker compose up -d</code>。
           </p>
         </div>
       </div>
@@ -44,6 +51,7 @@ export default function SettingsPage() {
         {status.app_version && (
           <span className="rounded bg-[var(--surface-2)] px-1.5 py-0.5 text-[10px] text-[var(--muted)]">
             {status.app_version}
+            {status.runtime && ` · ${RUNTIME_LABELS[status.runtime] ?? status.runtime}`}
           </span>
         )}
       </div>

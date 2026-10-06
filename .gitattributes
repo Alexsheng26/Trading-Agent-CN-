@@ -2,6 +2,12 @@
 # CRLF 混进容器会引发难查的问题（脚本无法执行、.env 值尾部带 \r 等）。
 * text=auto eol=lf
 
+# 例外：Windows 一键脚本（不进容器）。.cmd 必须是 CRLF —— cmd.exe 按 LF 解析批处理
+# 有已知的怪问题（标签跳转错位、行被截断）。git archive 打包时同样按这里转换。
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
 # 二进制文件不做转换
 *.png binary
 *.jpg binary

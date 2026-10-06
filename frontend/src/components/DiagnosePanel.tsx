@@ -205,6 +205,23 @@ function HostTable({ result }: { result: Diagnosis }) {
   );
 }
 
+/**
+ * "改完 .env 之后"的那一步。按后端报告的运行方式写：
+ * 不用 Docker 的人照着 docker 命令做，只会得到"docker 不是内部或外部命令"。
+ */
+function RestartStep({ result }: { result: Diagnosis }) {
+  if (result.runtime === "docker") {
+    return (
+      <>
+        执行 <code>docker compose up -d</code>（不要用 <code>restart</code>：它不会重新读取{" "}
+        <code>.env</code>，改了也不生效）
+      </>
+    );
+  }
+  // 老版本后端没有这个字段
+  return <>{result.restart_hint ?? "重启后端"}</>;
+}
+
 /** 把探测结果翻译成"接下来该做什么"。报一堆状态而不给下一步等于没说。 */
 function Advice({ result }: { result: Diagnosis }) {
   const real = result.providers.filter((p) => p.provider !== "mock");
@@ -238,9 +255,8 @@ function Advice({ result }: { result: Diagnosis }) {
     return (
       <Tip tone="warn">
         当前只启用了 mock 模拟数据源，界面上的价格全是程序生成的假数据。在{" "}
-        <code>.env</code> 里设 <code>DATA_PROVIDER_ORDER=akshare,tushare</code>，
-        然后 <code>docker compose up -d</code>（注意不是 <code>restart</code>，
-        见下）。
+        <code>.env</code> 里设 <code>DATA_PROVIDER_ORDER=akshare,tushare</code>，然后
+        <RestartStep result={result} />。
       </Tip>
     );
   }
@@ -257,11 +273,8 @@ function Advice({ result }: { result: Diagnosis }) {
         <br />
         <br />
         第一步先把假数据关掉：<code>.env</code> 里改成{" "}
-        <code>DATA_PROVIDER_ORDER=akshare,tushare</code>，然后执行{" "}
-        <code>docker compose up -d</code>。
+        <code>DATA_PROVIDER_ORDER=akshare,tushare</code>，然后<RestartStep result={result} />。
         <br />
-        <strong>不要用 <code>docker compose restart</code></strong> ——
-        它只是重启现有容器，不会重新读取 <code>.env</code>，改了也不生效。
         改完回这里再探测一次，最上面那行「尝试顺序」里不该再有 mock。
         <br />
         <br />
@@ -302,8 +315,7 @@ function Advice({ result }: { result: Diagnosis }) {
         最省心的替代方案是换 Tushare：它是正式 API 而不是抓网页，稳定得多。
         去 <code>tushare.pro</code> 免费注册拿 token，在 <code>.env</code> 里设{" "}
         <code>TUSHARE_TOKEN=你的token</code> 和{" "}
-        <code>DATA_PROVIDER_ORDER=tushare,akshare</code>，然后{" "}
-        <code>docker compose up -d</code>。
+        <code>DATA_PROVIDER_ORDER=tushare,akshare</code>，然后<RestartStep result={result} />。
       </Tip>
     );
   }

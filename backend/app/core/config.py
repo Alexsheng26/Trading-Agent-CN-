@@ -14,12 +14,17 @@ LLMProvider = Literal["anthropic", "openai_compat", "echo"]
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=(".env", "../.env"),
-        env_file_encoding="utf-8",
+        # utf-8-sig 兼容带 BOM 的 UTF-8：旧版 Windows 记事本存 UTF-8 会在文件头加 BOM，
+        # 按普通 utf-8 读的话，第一行的变量名前多出一个看不见的字符，那一项就悄悄失效了
+        env_file_encoding="utf-8-sig",
         extra="ignore",
     )
 
     # ---------- 运行环境 ----------
     app_env: Literal["dev", "prod"] = "dev"
+    # 怎么跑起来的：docker（docker-compose.yml 设）/ windows（scripts/windows/start.ps1 设）/
+    # 留空 = 开发模式。只用来把"改完 .env 怎么生效"这类提示写对，不影响任何行为
+    app_runtime: str = ""
     log_level: str = "INFO"
     cors_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:3000"]

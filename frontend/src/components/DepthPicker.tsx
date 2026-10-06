@@ -121,8 +121,8 @@ export function DepthPicker({
               ) : (
                 <>
                   目前只有一个模型可用。在 <code>.env</code> 的 <code>LLM_MODEL_CHOICES</code>{" "}
-                  里写上想用的模型名（逗号分隔），执行 <code>docker compose up -d</code>{" "}
-                  后这里就会出现选项。
+                  里写上想用的模型名（逗号分隔），然后{options?.restart_hint ?? "重启后端"}，{""}
+                  这里就会出现选项。
                 </>
               )}
             </p>

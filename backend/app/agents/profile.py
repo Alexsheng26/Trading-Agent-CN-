@@ -26,6 +26,7 @@ from typing import Any, Literal
 
 from app.agents.roster import ANALYST_CLASSES
 from app.core.config import Settings
+from app.core.runtime import restart_hint
 from app.llm.base import Effort
 
 Depth = Literal["quick", "standard", "deep"]
@@ -114,7 +115,7 @@ def resolve_profile(
         if model not in allowed:
             raise ProfileError(
                 f"模型 {model} 不在可选列表里（可选：{'、'.join(allowed)}）。"
-                "要加新模型，在 .env 的 LLM_MODEL_CHOICES 里追加后执行 docker compose up -d"
+                f"要加新模型，在 .env 的 LLM_MODEL_CHOICES 里追加，然后{restart_hint(settings)}"
             )
 
     std_rounds = max(0, settings.debate_rounds)
@@ -231,6 +232,8 @@ def describe_options(settings: Settings) -> dict[str, Any]:
         "depths": depths,
         "models": _model_options(settings),
         "notes": notes,
+        # 前端提示"改完 .env 怎么生效"时用，按运行方式给出能照做的那一步
+        "restart_hint": restart_hint(settings),
     }
 
 

@@ -6,6 +6,7 @@ from fastapi import APIRouter
 
 from app.agents.profile import allowed_models
 from app.core.config import get_settings
+from app.core.runtime import current_runtime, restart_hint
 from app.core.version import APP_VERSION
 from app.data.base import ALL_CAPABILITIES
 from app.data.registry import get_registry
@@ -48,6 +49,9 @@ async def status() -> dict:
         # 版本与运输层状态：排查时第一件要确认的事就是"跑的是哪一版、
         # 浏览器指纹到底有没有生效"。不显示出来只能靠猜。
         "app_version": APP_VERSION,
+        # 怎么跑起来的（docker / windows / dev），以及改完 .env 怎么让它生效
+        "runtime": current_runtime(settings),
+        "restart_hint": restart_hint(settings),
         "transport": _transport_status(settings),
         "active_sources": active,
         # 前端据此给出醒目警示：模拟数据是程序生成的假数字，

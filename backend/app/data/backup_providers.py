@@ -124,6 +124,7 @@ class XueqiuProvider(_AkshareBacked):
 
     async def quote(self, symbol: Symbol) -> Quote:
         from app.core.config import get_settings  # noqa: PLC0415 —— 避免循环导入
+        from app.core.runtime import restart_hint  # noqa: PLC0415
 
         token = get_settings().xueqiu_token.strip()
         kwargs: dict[str, Any] = {"symbol": symbol.xueqiu}
@@ -138,8 +139,8 @@ class XueqiuProvider(_AkshareBacked):
             if not token and ("400016" in str(exc) or "token" in str(exc).lower()):
                 raise ProviderUnavailable(
                     "雪球行情需要登录凭证：浏览器打开 xueqiu.com，F12 → 应用 → Cookie，"
-                    "复制 xq_a_token 的值，填到 .env 的 XUEQIU_TOKEN 后执行 "
-                    "docker compose up -d。不配也没关系，行情会自动降级到后面的数据源。"
+                    f"复制 xq_a_token 的值，填到 .env 的 XUEQIU_TOKEN，然后{restart_hint()}。"
+                    "不配也没关系，行情会自动降级到后面的数据源。"
                 ) from exc
             raise
         if df is None or df.empty:
