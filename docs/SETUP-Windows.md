@@ -39,10 +39,14 @@
    > 不做这步，之后每次双击脚本 Windows 都会弹「无法验证发布者」的警告。
    > 已经解压了也没关系：弹警告时点「运行」，脚本第一次运行后会自己去掉这个标记。
 
-2. 右键 zip → **全部解压缩**，解压到一个**路径里没有中文和空格**的地方，推荐 `C:\dev\`。
+2. 右键 zip → **全部解压缩**，目标路径填 **`C:\dev`**（路径里别有中文和空格）。
    解压出来是 `C:\dev\trading-agent-cn`，里面能看到 `start-windows.cmd`、`backend`、`frontend` 这些。
 
-**以前用过 Docker 版、文件夹就在 `C:\dev\trading-agent-cn` 的**：直接解压覆盖。
+   > ⚠️ 目标路径**不要**填 `C:\dev\trading-agent-cn`：zip 里自带 `trading-agent-cn` 这一层，
+   > 填它会变成 `trading-agent-cn\trading-agent-cn` 两层，外层就找不到 `start-windows.cmd`。
+
+**以前用过 Docker 版、文件夹就在 `C:\dev\trading-agent-cn` 的**：目标路径同样填 `C:\dev`，
+提示有同名文件时选「替换目标中的文件」。
 你配好的 `.env` 会保留（zip 里不带 `.env`），接 DeepSeek 的配置不用重填。
 
 ---
@@ -173,7 +177,7 @@ DEBATE_ROUNDS=1
 | 启动 | 双击 `start-windows.cmd` |
 | 停止 | 关掉那个窗口（或者在窗口里按 `Ctrl+C`） |
 | 改了 `.env` 让它生效 | 再双击一次 `start-windows.cmd`（会自动重启） |
-| 更新到新版本 | 关掉窗口 → 新 zip 解压**覆盖到同一个文件夹** → 双击 `start-windows.cmd`（缺什么自动补装，前端自动重新构建） |
+| 更新到新版本 | 关掉窗口 → 新 zip 解压，目标路径填 `C:\dev`，选「替换目标中的文件」→ 双击 `start-windows.cmd`（缺什么自动补装，前端自动重新构建） |
 | 装出问题了，重新装一遍 | 双击 `setup-windows.cmd` |
 | 提示端口被占用 / 窗口找不到了停不掉 | 双击 `stop-windows.cmd` |
 
@@ -198,6 +202,12 @@ Docker Desktop 可以在「设置 → 应用」里卸载。不想卸也行，至
 
 先看那个窗口：出错时脚本会停下来，用红字写明原因和下一步该做什么，
 **按回车之前窗口不会关**。需要求助时，把整个窗口截图发出来最有用。
+
+### 找不到 `start-windows.cmd`
+
+多半是解压时多套了一层：看看 `C:\dev\trading-agent-cn` 里面是不是还有一个 `trading-agent-cn` 文件夹。
+双击进去 → `Ctrl+A` 全选 → `Ctrl+X` 剪切 → 回到上一层 → `Ctrl+V` 粘贴，选「替换目标中的文件」→
+把空了的那个 `trading-agent-cn` 删掉。
 
 ### 安装卡在「找不到 Python」
 
