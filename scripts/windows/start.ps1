@@ -114,6 +114,9 @@ $env:APP_RUNTIME = 'windows'
 # 中文 Windows 上 Python 默认按 GBK 读写文件和管道，统一成 UTF-8
 $env:PYTHONUTF8 = '1'
 $env:PYTHONUNBUFFERED = '1'
+# akshare 拉全市场列表时会画进度条（Please wait for a moment...），
+# 第一次启动时正好和"已经启动"那段说明搅在一起，把手机地址都冲散了。关掉它，不影响取数
+$env:TQDM_DISABLE = '1'
 Set-FrontendEnv
 # Next.js 依赖的 http-proxy 在新版 Node 上会打一条 DeprecationWarning，对用户只是噪音
 $env:NODE_OPTIONS = ($env:NODE_OPTIONS + ' --no-deprecation').Trim()
