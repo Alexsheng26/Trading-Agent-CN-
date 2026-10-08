@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 import pytest
@@ -141,6 +142,55 @@ def test_diagnose_reports_per_interface(client) -> None:  # type: ignore[no-unty
     assert {"搜索", "实时行情", "日线", "新闻", "大盘指数"} <= names
     for iface in mock["interfaces"]:
         assert iface["status"] in ("正常", "空结果", "失败", "超时", "不支持", "跳过")
+
+
+def test_diagnose_probes_sources_in_parallel(client, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """诊断要在前端转发层的耐心之内答完。
+
+    Next.js 转发 /api/* 时，后端 30 秒不吐数据就直接回 500。逐个数据源串行探测，
+    在真实网络上常常超过一分钟（用户机器上实测踩到：点「开始探测」只看到 HTTP 500）。
+    数据源之间、以及主机探测要并发：总耗时约等于最慢的那一个，而不是全部相加。
+    """
+    import app.api.v1.market as market
+    import app.services.host_probe as hp
+    from app.data.base import CAP_QUOTE
+
+    delay = 0.5
+
+    class Slow:
+        capabilities = frozenset({CAP_QUOTE})
+
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        async def healthcheck(self) -> bool:
+            return True
+
+        async def quote(self, _symbol):  # type: ignore[no-untyped-def]
+            await asyncio.sleep(delay)
+            return object()
+
+    class FakeRegistry:
+        _providers = [Slow("a"), Slow("b"), Slow("c")]
+
+    async def slow_hosts(_impersonate):  # type: ignore[no-untyped-def]
+        await asyncio.sleep(delay)
+        return hp.ProbeReport(summary="ok")
+
+    monkeypatch.setattr(market, "get_registry", lambda: FakeRegistry())
+    monkeypatch.setattr(hp, "probe_hosts", slow_hosts)
+
+    started = time.perf_counter()
+    body = client.get("/api/v1/market/diagnose").json()
+    elapsed = time.perf_counter() - started
+
+    assert [p["provider"] for p in body["providers"]] == ["a", "b", "c"], "顺序要和尝试顺序一致"
+    for p in body["providers"]:
+        quote = next(i for i in p["interfaces"] if i["name"] == "实时行情")
+        assert quote["status"] == "正常"
+    assert body["host_summary"] == "ok"
+    # 串行是 4 × 0.5 = 2 秒；并发约 0.5 秒
+    assert elapsed < 1.5, f"诊断用了 {elapsed:.2f} 秒，像是在逐个串行探测"
 
 
 # ---------------------------------------------------------------- 自选股

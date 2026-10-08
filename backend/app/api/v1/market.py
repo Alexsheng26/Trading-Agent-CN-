@@ -338,8 +338,14 @@ async def diagnose() -> dict:
         CAP_FUND_HOLDINGS: ("ETF 持仓", lambda p: p.fund_holdings(probe_etf)),
     }
 
-    out: list[dict] = []
-    for provider in registry._providers:  # noqa: SLF001 —— 诊断用途
+    from app.core.runtime import current_runtime, restart_hint  # noqa: PLC0415
+    from app.core.version import APP_VERSION  # noqa: PLC0415
+    from app.data.browser_transport import is_enabled  # noqa: PLC0415
+    from app.services.host_probe import probe_hosts  # noqa: PLC0415
+
+    settings = get_settings()
+
+    async def probe_provider(provider) -> dict:  # type: ignore[no-untyped-def]
         entry: dict = {"provider": provider.name, "interfaces": []}
         try:
             entry["dependency_ok"] = await provider.healthcheck()
@@ -378,25 +384,27 @@ async def diagnose() -> dict:
                         "detail": f"返回 {n} 条",
                     }
                 )
-        out.append(entry)
+        return entry
 
-    from app.core.runtime import current_runtime, restart_hint  # noqa: PLC0415
-    from app.core.version import APP_VERSION  # noqa: PLC0415
-    from app.data.browser_transport import is_enabled  # noqa: PLC0415
-    from app.services.host_probe import probe_hosts  # noqa: PLC0415
+    async def probe_hosts_safely() -> tuple[list[dict], str]:
+        # 主机可达性：分清"连不上这个域名"和"客户端被按指纹拒绝"这两种情况。
+        # 只看接口报错是分不清的，而两者的处理方式完全不同。
+        # 探测本身出问题不能让整个诊断挂掉 —— 这是用户排查时唯一的工具。
+        try:
+            hosts = await probe_hosts(settings.akshare_impersonate)
+        except Exception as exc:  # pragma: no cover —— 防御性
+            log.warning("主机可达性探测失败：%s", exc)
+            return [], f"主机探测本身失败了：{short_error(exc)}"
+        return [asdict(r) for r in hosts.results], hosts.summary
 
-    settings = get_settings()
-    # 主机可达性：分清"连不上这个域名"和"客户端被按指纹拒绝"这两种情况。
-    # 只看接口报错是分不清的，而两者的处理方式完全不同。
-    # 探测本身出问题不能让整个诊断挂掉 —— 这是用户排查时唯一的工具。
-    try:
-        hosts = await probe_hosts(settings.akshare_impersonate)
-        host_results = [asdict(r) for r in hosts.results]
-        host_summary = hosts.summary
-    except Exception as exc:  # pragma: no cover —— 防御性
-        log.warning("主机可达性探测失败：%s", exc)
-        host_results = []
-        host_summary = f"主机探测本身失败了：{short_error(exc)}"
+    # 各数据源之间、以及主机探测，互不相干，一起跑。逐个跑的话
+    # 4 个源 × 9 个接口、单个最多 12 秒（两个全市场列表接口必定吃满 12 秒），
+    # 在真实网络上常常超过一分钟 —— 用户机器上实测过：前端转发层等不了那么久，
+    # 直接回了 500。同一个数据源内部仍然逐个调用，不一下子对同一个网站发一串请求。
+    *out, (host_results, host_summary) = await asyncio.gather(
+        *(probe_provider(p) for p in registry._providers),  # noqa: SLF001 —— 诊断用途
+        probe_hosts_safely(),
+    )
 
     return {
         "checked_at": session_state().as_of.isoformat(),

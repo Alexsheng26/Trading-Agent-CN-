@@ -60,7 +60,7 @@ export function DiagnosePanel() {
       </button>
       {running && (
         <p className="mt-2 text-[11px] text-[var(--muted)]">
-          会真的发网络请求：先并发探测各主机可达性，再逐个调用接口（单个最多 12 秒）。请不要关闭页面。
+          会真的发网络请求：各数据源和主机可达性同时探测，同一个数据源的接口逐个调用（单个最多 12 秒）。请不要关闭页面。
         </p>
       )}
 
