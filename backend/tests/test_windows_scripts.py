@@ -99,3 +99,41 @@ def test_ps1_parses_and_avoids_ps7_only_syntax() -> None:
         timeout=120,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _powershell_run_blocks(workflow: str) -> list[tuple[int, str]]:
+    """workflow 里每个 `shell: powershell` 步骤的 run 脚本（起始行号, 内容）。
+
+    不引 PyYAML（CI 的后端任务只装 dev 依赖）：这个文件的写法固定是
+    `shell: powershell` 紧跟 `run: |`，按缩进取块就够了。
+    """
+    lines = workflow.splitlines()
+    blocks: list[tuple[int, str]] = []
+    for i, line in enumerate(lines):
+        if line.strip() != "shell: powershell":
+            continue
+        run = lines[i + 1]
+        assert run.strip().startswith("run:"), f"第 {i + 2} 行：shell: powershell 后面应紧跟 run"
+        if run.strip() != "run: |":
+            blocks.append((i + 2, run.split("run:", 1)[1]))
+            continue
+        indent = len(run) - len(run.lstrip())
+        body = []
+        for nxt in lines[i + 2 :]:
+            if nxt.strip() and len(nxt) - len(nxt.lstrip()) <= indent:
+                break
+            body.append(nxt)
+        blocks.append((i + 3, "\n".join(body)))
+    return blocks
+
+
+def test_ci_powershell_steps_are_ascii() -> None:
+    """runner 把 `shell: powershell` 的 run 写成无 BOM 的临时 .ps1 交给 PowerShell 5.1，
+    它按 ANSI 代码页读：中文被读乱，UTF-8 里的 0x94 还会变成弯引号把字符串截断
+    （真出过：Unexpected token / The string is missing the terminator）。"""
+    workflow = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    blocks = _powershell_run_blocks(workflow)
+    assert blocks, "ci.yml 里应当有 windows-native 的 PowerShell 步骤"
+    for start, body in blocks:
+        for offset, line in enumerate(body.splitlines()):
+            assert line.isascii(), f"ci.yml 第 {start + offset} 行有非 ASCII 字符：{line.strip()}"

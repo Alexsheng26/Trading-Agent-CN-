@@ -120,19 +120,21 @@ jobs:
       - name: 安装（setup-windows.cmd）
         shell: cmd
         run: setup-windows.cmd < NUL
+      # Windows PowerShell 5.1 按 ANSI 代码页读 runner 生成的临时脚本（无 BOM），
+      # 中文会被读乱、甚至吞掉引号 —— 所以 shell: powershell 的 run 里只写 ASCII
       - name: 确认安装完整
         shell: powershell
         run: |
           foreach ($f in 'backend\.venv\Scripts\python.exe', 'frontend\.next\BUILD_ID', '.env') {
-            if (-not (Test-Path $f)) { throw "安装后缺少 $f" }
+            if (-not (Test-Path $f)) { throw "missing after setup: $f" }
           }
       - name: 启动 → 经前端访问后端 → 再次启动 → 停止
         shell: powershell
         run: |
           $log = "$env:RUNNER_TEMP\start.log"
-          $start = Start-Process powershell.exe -PassThru -RedirectStandardOutput $log -ArgumentList @(
-            '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-            '-File', "$PWD\scripts\windows\start.ps1", '-NoBrowser')
+          # 5.1 joins -ArgumentList with spaces and does not quote, so quote the path ourselves
+          $startArgs = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -NoBrowser' -f "$PWD\scripts\windows\start.ps1"
+          $start = Start-Process powershell.exe -PassThru -RedirectStandardOutput $log -ArgumentList $startArgs
           try {
             $status = $null
             for ($i = 0; $i -lt 90 -and -not $start.HasExited; $i++) {
@@ -141,23 +143,23 @@ jobs:
                 break
               } catch { Start-Sleep -Seconds 2 }
             }
-            if (-not $status) { throw '启动失败：前端 3000 端口一直访问不到' }
-            if ($status.runtime -ne 'windows') { throw "runtime 应为 windows，实际是 $($status.runtime)" }
+            if (-not $status) { throw 'start failed: frontend port 3000 never answered' }
+            if ($status.runtime -ne 'windows') { throw "runtime should be windows, got: $($status.runtime)" }
 
-            # 已经在运行时再启动一次：应当直接返回，不动正在运行的实例
+            # Starting again while running must return at once and leave the instance alone
             & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\windows\start.ps1 -NoBrowser
-            if ($LASTEXITCODE -ne 0) { throw "第二次启动退出码 $LASTEXITCODE" }
-            if ($start.HasExited) { throw '第二次启动把正在运行的实例弄停了' }
+            if ($LASTEXITCODE -ne 0) { throw "second start exited with $LASTEXITCODE" }
+            if ($start.HasExited) { throw 'second start stopped the running instance' }
 
             & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\windows\stop.ps1
             Start-Sleep -Seconds 3
             foreach ($port in 3000, 8000) {
               if (Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue) {
-                throw "停止后端口 $port 还在监听"
+                throw "port $port still listening after stop"
               }
             }
-            if (-not $start.HasExited) { throw '停止后启动窗口还在' }
+            if (-not $start.HasExited) { throw 'start window still running after stop' }
           } finally {
-            Write-Host '----- start.ps1 输出 -----'
+            Write-Host '----- start.ps1 output -----'
             if (Test-Path $log) { Get-Content $log }
           }

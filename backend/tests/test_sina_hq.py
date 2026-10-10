@@ -269,7 +269,13 @@ def _sina(rows: dict | None = None, error: Exception | None = None):  # type: ig
     async def no_akshare(func_name: str, /, **kwargs):  # type: ignore[no-untyped-def]
         raise AssertionError(f"实时价不该走到 akshare：{func_name}")
 
+    async def healthy() -> bool:
+        # 真的 healthcheck 要能 import akshare；CI 的后端任务不装 akshare，
+        # 而这里的实时价只走 hq（httpx），和装没装 akshare 无关
+        return True
+
     provider._call = no_akshare  # type: ignore[assignment, method-assign]
+    provider.healthcheck = healthy  # type: ignore[method-assign]
     return provider, fetch
 
 
