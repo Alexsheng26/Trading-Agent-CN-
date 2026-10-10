@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 import random
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 
 from app.core.clock import now_utc
 from app.core.errors import CapabilityNotSupported
@@ -204,6 +204,44 @@ class MockProvider:
             prev_close = close
             cursor += timedelta(days=1)
         return bars
+
+    #: 60 分钟线每天四根，标在各自走完的时刻（A 股 9:30-11:30、13:00-15:00）
+    _HOUR_ENDS = (time(10, 30), time(11, 30), time(14, 0), time(15, 0))
+    #: 成交量的日内分布：开盘和收盘最活跃
+    _HOUR_WEIGHTS = (0.35, 0.2, 0.2, 0.25)
+
+    async def minute_bars(self, symbol: Symbol, period: int, start: date, end: date) -> list[Bar]:
+        """把每根模拟日线拆成 4 根 60 分钟线，开高低收和那天的日线对得上。"""
+        if period != 60:
+            raise CapabilityNotSupported("模拟数据只有 60 分钟线")
+        digits = symbol.price_decimals
+        out: list[Bar] = []
+        for day in await self.daily_bars(symbol, start, end):
+            rng = self._rng(symbol, f"minute:{day.date.isoformat()}")
+            # 日内走势：开盘价 -> 三个中间点 -> 收盘价，中间点落在当天高低之间
+            path = [day.open]
+            path += [round(rng.uniform(day.low, day.high), digits) for _ in range(3)]
+            path.append(day.close)
+            # 当天的最高、最低各落在某一根上，日线和合成后的 2 小时线才对得上
+            high_at, low_at = rng.randrange(4), rng.randrange(4)
+            for i, ends in enumerate(self._HOUR_ENDS):
+                o, c = path[i], path[i + 1]
+                hi = day.high if i == high_at else max(o, c)
+                lo = day.low if i == low_at else min(o, c)
+                volume = round(day.volume * self._HOUR_WEIGHTS[i], 0)
+                out.append(
+                    Bar(
+                        date=day.date,
+                        time=datetime.combine(day.date, ends),
+                        open=o,
+                        high=max(hi, o, c),
+                        low=min(lo, o, c),
+                        close=c,
+                        volume=volume,
+                        amount=round(volume * c * 100, 0),
+                    )
+                )
+        return out
 
     async def financials(self, symbol: Symbol, periods: int = 8) -> list[FinancialReport]:
         if symbol.is_etf:

@@ -1,6 +1,9 @@
 "use client";
 
 // 股票搜索框。支持代码和名称，输入防抖 300ms。
+//
+// 点结果本身 = 选中它（由调用方决定去哪，一般是进个股页）；
+// 给了 onAdd 时每行右边多一个「+ 自选」—— 搜一只票不代表就要加自选，两件事分开。
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
@@ -9,10 +12,16 @@ import type { StockBasic } from "@/lib/types";
 
 export function StockSearch({
   onPick,
+  onAdd,
+  isAdded,
   placeholder = "输入代码或名称，如 600519 / 茅台 / 512480",
   autoFocus = false,
 }: {
   onPick: (stock: StockBasic) => void;
+  /** 给了就在每行右边显示「+ 自选」。加完下拉框不关，可以接着加 */
+  onAdd?: (stock: StockBasic) => Promise<void>;
+  /** 哪些已经在自选里（显示「已自选」） */
+  isAdded?: (symbol: string) => boolean;
   placeholder?: string;
   autoFocus?: boolean;
 }) {
@@ -24,6 +33,9 @@ export function StockSearch({
   // 按名称搜不到东西时，先确认是不是本地代码目录还没建好 ——
   // 不解释原因的"没找到"最让人困惑
   const [indexMissing, setIndexMissing] = useState(false);
+  // 正在加自选的那一只，以及加失败的原因
+  const [adding, setAdding] = useState<string | null>(null);
+  const [addError, setAddError] = useState<string | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -97,6 +109,19 @@ export function StockSearch({
     setOpen(false);
   };
 
+  const add = async (stock: StockBasic) => {
+    if (!onAdd) return;
+    setAdding(stock.symbol);
+    setAddError(null);
+    try {
+      await onAdd(stock);
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : "加入自选失败");
+    } finally {
+      setAdding(null);
+    }
+  };
+
   return (
     <div ref={boxRef} className="relative">
       <input
@@ -118,11 +143,11 @@ export function StockSearch({
       {open && results.length > 0 && (
         <ul className="absolute left-0 right-0 top-full z-30 mt-1 max-h-72 overflow-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-xl">
           {results.map((stock) => (
-            <li key={stock.symbol}>
+            <li key={stock.symbol} className="flex items-center hover:bg-[var(--surface-2)]">
               <button
                 type="button"
                 onClick={() => pick(stock)}
-                className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-[var(--surface-2)]"
+                className="flex min-w-0 flex-1 items-center justify-between gap-3 px-4 py-3 text-left"
               >
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-medium">
@@ -144,8 +169,21 @@ export function StockSearch({
                   </span>
                 )}
               </button>
+              {onAdd && (
+                <AddButton
+                  name={stock.name || stock.symbol}
+                  added={isAdded?.(stock.symbol) ?? false}
+                  busy={adding === stock.symbol}
+                  onClick={() => void add(stock)}
+                />
+              )}
             </li>
           ))}
+          {addError && (
+            <li className="border-t border-[var(--border)] px-4 py-2 text-xs text-[var(--warn)]">
+              {addError}
+            </li>
+          )}
         </ul>
       )}
 
@@ -174,5 +212,33 @@ export function StockSearch({
         </div>
       )}
     </div>
+  );
+}
+
+function AddButton({
+  name,
+  added,
+  busy,
+  onClick,
+}: {
+  name: string;
+  added: boolean;
+  busy: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={added || busy}
+      aria-label={added ? `${name} 已在自选` : `把 ${name} 加入自选`}
+      className={`mr-3 shrink-0 rounded-md border px-2.5 py-1 text-xs ${
+        added
+          ? "border-transparent text-[var(--muted)]"
+          : "border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent-soft)] disabled:opacity-50"
+      }`}
+    >
+      {added ? "已自选" : busy ? "加入中…" : "+ 自选"}
+    </button>
   );
 }

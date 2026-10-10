@@ -3,16 +3,19 @@
 // 首页：大盘 + 自选股。手机上是卡片列表，桌面上是表格。
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { SessionBadge, TickPrice } from "@/components/LivePrice";
 import { StockSearch } from "@/components/StockSearch";
-import { ApiError, api } from "@/lib/api";
+import { api } from "@/lib/api";
 import { changeColor, fmtClock, fmtMoney, fmtNum, fmtPct } from "@/lib/format";
 import { isEtfSymbol, priceDecimals } from "@/lib/symbols";
 import { useLiveIndexes, useLiveQuotes } from "@/lib/useLiveQuote";
-import type { Quote, WatchlistItem } from "@/lib/types";
+import { codeOf } from "@/lib/useWatchlistCodes";
+import type { Quote, StockBasic, WatchlistItem } from "@/lib/types";
 
 export default function HomePage() {
+  const router = useRouter();
   const [items, setItems] = useState<WatchlistItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
@@ -49,16 +52,12 @@ export default function HomePage() {
     void load();
   }, [load]);
 
-  const add = async (symbol: string) => {
-    try {
-      await api.addToWatchlist(symbol);
-      await load();
-    } catch (err) {
-      setMessage(
-        err instanceof ApiError ? err.message : err instanceof Error ? err.message : "添加失败",
-      );
-    }
+  // 搜索结果旁的「+ 自选」。失败时抛出去，由搜索框在那一行下面显示原因
+  const add = async (stock: StockBasic) => {
+    const created = await api.addToWatchlist(stock.symbol);
+    setItems((prev) => [...prev, created]);
   };
+  const addedCodes = useMemo(() => new Set(items.map((i) => codeOf(i.symbol))), [items]);
 
   const remove = async (id: number) => {
     try {
@@ -110,7 +109,12 @@ export default function HomePage() {
         </div>
       )}
 
-      <StockSearch onPick={(s) => void add(s.symbol)} placeholder="搜索并加入自选…" />
+      {/* 点结果 = 进个股页看看；想长期关注再点它右边的「+ 自选」 */}
+      <StockSearch
+        onPick={(s) => router.push(`/analyze?symbol=${encodeURIComponent(s.symbol)}`)}
+        onAdd={add}
+        isAdded={(symbol) => addedCodes.has(codeOf(symbol))}
+      />
 
       {message && (
         <div className="mt-3 rounded-lg bg-[var(--warn-soft)] px-3 py-2 text-xs text-[var(--warn)]">
@@ -262,7 +266,9 @@ function EmptyState() {
   return (
     <div className="rounded-xl border border-dashed border-[var(--border)] px-4 py-10 text-center">
       <p className="text-sm text-[var(--muted)]">自选股还是空的</p>
-      <p className="mt-1 text-xs text-[var(--muted)]">用上面的搜索框加入第一只股票</p>
+      <p className="mt-1 text-xs text-[var(--muted)]">
+        在上面搜索，点结果右边的「+ 自选」加入第一只
+      </p>
       <Link
         href="/analyze"
         className="mt-4 inline-block rounded-lg bg-[var(--accent)] px-4 py-2 text-sm text-white"

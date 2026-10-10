@@ -267,10 +267,12 @@ def test_capabilities_are_narrow() -> None:
     assert SinaProvider().capabilities == {
         "quote",
         "daily_bars",
+        "minute_bars",
         "index_quotes",
         "search",
         "etf_quote",
         "etf_bars",
+        "etf_minute_bars",
         "etf_list",
     }
 

@@ -7,6 +7,7 @@ import type {
   AnalysisRun,
   AnalysisRunSummary,
   Bar,
+  BarPeriod,
   Depth,
   Diagnosis,
   FundInfo,
@@ -72,8 +73,11 @@ export const api = {
     request<Quote[]>(`/market/quotes?symbols=${encodeURIComponent(symbols.join(","))}`, {
       signal,
     }),
-  bars: (symbol: string, days = 250) =>
-    request<Bar[]>(`/market/bars/${encodeURIComponent(symbol)}?days=${days}`),
+  bars: (symbol: string, days = 250, period: BarPeriod = "day", signal?: AbortSignal) =>
+    request<Bar[]>(
+      `/market/bars/${encodeURIComponent(symbol)}?days=${days}&period=${period}`,
+      { signal },
+    ),
   indicators: (symbol: string) =>
     request<Indicators>(`/market/indicators/${encodeURIComponent(symbol)}`),
   /** ETF 概况与重仓股。只对 ETF 有效，股票会返回 400 */

@@ -120,6 +120,9 @@ export interface FundInfo {
 
 export interface Bar {
   date: string;
+  /** 分钟级 K 线（2 小时线）这根走完的时刻：北京时间、不带时区，如 "2026-10-09T11:30:00"。
+   *  日线、周线为空 */
+  time?: string | null;
   open: number;
   high: number;
   low: number;
@@ -128,6 +131,9 @@ export interface Bar {
   amount: number;
   change_pct?: number | null;
 }
+
+/** K 线周期：2 小时（上午、下午各一根）/ 日 K / 周 K */
+export type BarPeriod = "120m" | "day" | "week";
 
 export type FibKind = "swing" | "retracement" | "extension";
 

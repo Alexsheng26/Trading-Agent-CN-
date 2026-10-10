@@ -32,6 +32,8 @@ CALLS: dict[str, tuple[str, ...]] = {
     "stock_value_em": ("symbol",),
     "stock_individual_info_em": ("symbol",),
     "stock_zh_a_hist": ("symbol", "period", "start_date", "end_date", "adjust"),
+    # 60 分钟线（2 小时图由它合成）
+    "stock_zh_a_hist_min_em": ("symbol", "start_date", "end_date", "period", "adjust"),
     "stock_financial_abstract": ("symbol",),
     "stock_news_em": ("symbol",),
     "stock_individual_fund_flow": ("stock", "market"),
@@ -39,11 +41,13 @@ CALLS: dict[str, tuple[str, ...]] = {
     # ---- ETF ----
     "fund_etf_spot_em": (),
     "fund_etf_hist_em": ("symbol", "period", "start_date", "end_date", "adjust"),
+    "fund_etf_hist_min_em": ("symbol", "start_date", "end_date", "period", "adjust"),
     "fund_overview_em": ("symbol",),
     "fund_portfolio_hold_em": ("symbol", "date"),
     # 新浪（backup_providers.SinaProvider）
     "fund_etf_category_sina": ("symbol",),
     "fund_etf_hist_sina": ("symbol",),
+    "stock_zh_a_minute": ("symbol", "period", "adjust"),
     # 雪球（backup_providers.XueqiuProvider），股票和场内基金共用
     "stock_individual_spot_xq": ("symbol", "token"),
 }

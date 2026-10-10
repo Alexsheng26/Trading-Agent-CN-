@@ -24,11 +24,13 @@ from app.data.base import (
     CAP_BASIC,
     CAP_ETF_BARS,
     CAP_ETF_LIST,
+    CAP_ETF_MINUTE_BARS,
     CAP_ETF_QUOTE,
     CAP_FINANCIALS,
     CAP_FUND_HOLDINGS,
     CAP_FUND_PROFILE,
     CAP_INDEXES,
+    CAP_MINUTE_BARS,
     CAP_MONEY_FLOW,
     CAP_NEWS,
     CAP_QUOTE,
@@ -252,6 +254,10 @@ class ProviderRegistry:
     ) -> list[Bar]:
         cap = CAP_ETF_BARS if symbol.is_etf else CAP_BARS
         return await self._dispatch(cap, lambda p: p.daily_bars(symbol, start, end, adjust))
+
+    async def minute_bars(self, symbol: Symbol, period: int, start: date, end: date) -> list[Bar]:
+        cap = CAP_ETF_MINUTE_BARS if symbol.is_etf else CAP_MINUTE_BARS
+        return await self._dispatch(cap, lambda p: p.minute_bars(symbol, period, start, end))
 
     async def financials(self, symbol: Symbol, periods: int = 8) -> list[FinancialReport]:
         return await self._dispatch(CAP_FINANCIALS, lambda p: p.financials(symbol, periods))

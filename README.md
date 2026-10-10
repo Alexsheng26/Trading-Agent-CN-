@@ -304,6 +304,7 @@ Windows（不用 Docker）：双击 `start-windows.cmd` 启动（缺什么先自
 | GET | `/api/v1/market/session` | 当前交易时段与建议轮询间隔 |
 | GET | `/api/v1/market/quotes?symbols=` | 批量行情（自选股轮询用，一次最多 50 只）|
 | GET | `/api/v1/market/snapshot/{symbol}` | 一次取齐个股全维度数据 |
+| GET | `/api/v1/market/bars/{symbol}?period=` | K 线：`day` 日线 / `week` 周线（日线合成）/ `120m` 2 小时（60 分钟线合成，上午、下午各一根）|
 | GET | `/api/v1/market/indicators/{symbol}` | 技术指标快照 + 形态标签 |
 | GET | `/api/v1/market/fund/{symbol}` | ETF 概况（跟踪标的、规模、费率）与前十大重仓股 |
 | GET | `/api/v1/market/diagnose` | 逐接口探测每个数据源，报告失败原因（排查用，慢）|

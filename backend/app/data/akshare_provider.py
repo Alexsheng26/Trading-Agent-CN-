@@ -26,11 +26,13 @@ from app.data.base import (
     CAP_BASIC,
     CAP_ETF_BARS,
     CAP_ETF_LIST,
+    CAP_ETF_MINUTE_BARS,
     CAP_ETF_QUOTE,
     CAP_FINANCIALS,
     CAP_FUND_HOLDINGS,
     CAP_FUND_PROFILE,
     CAP_INDEXES,
+    CAP_MINUTE_BARS,
     CAP_MONEY_FLOW,
     CAP_NEWS,
     CAP_QUOTE,
@@ -62,8 +64,10 @@ class AkshareProvider:
             CAP_NEWS,
             CAP_MONEY_FLOW,
             CAP_INDEXES,
+            CAP_MINUTE_BARS,
             CAP_ETF_QUOTE,
             CAP_ETF_BARS,
+            CAP_ETF_MINUTE_BARS,
             CAP_ETF_LIST,
             CAP_FUND_PROFILE,
             CAP_FUND_HOLDINGS,
@@ -333,6 +337,42 @@ class AkshareProvider:
             bars.append(
                 Bar(
                     date=d,
+                    open=_to_float(_pick(row, "开盘")) or close,
+                    high=_to_float(_pick(row, "最高")) or close,
+                    low=_to_float(_pick(row, "最低")) or close,
+                    close=close,
+                    volume=_to_float(_pick(row, "成交量")) or 0.0,
+                    amount=_to_float(_pick(row, "成交额")) or 0.0,
+                    change_pct=_to_float(_pick(row, "涨跌幅")),
+                    turnover_rate=_to_float(_pick(row, "换手率")),
+                )
+            )
+        return bars
+
+    async def minute_bars(self, symbol: Symbol, period: int, start: date, end: date) -> list[Bar]:
+        # 个股和 ETF 要用不同的函数：个股那个按"6 开头"判断沪市，
+        # 5 开头的沪市 ETF 会被查成深市（和盘口接口是同一个坑）
+        df = await self._call(
+            "fund_etf_hist_min_em" if symbol.is_etf else "stock_zh_a_hist_min_em",
+            symbol=symbol.akshare,
+            start_date=f"{start:%Y-%m-%d} 09:00:00",
+            end_date=f"{end:%Y-%m-%d} 15:30:00",
+            period=str(period),
+            # 和日线一样前复权，切换周期时同一段行情的价位对得上
+            adjust="qfq",
+        )
+        if df is None or df.empty:
+            return []
+        bars: list[Bar] = []
+        for _, row in df.iterrows():
+            t = _parse_datetime(_pick(row, "时间"))
+            close = _to_float(_pick(row, "收盘"))
+            if t is None or close is None:
+                continue
+            bars.append(
+                Bar(
+                    date=t.date(),
+                    time=t,
                     open=_to_float(_pick(row, "开盘")) or close,
                     high=_to_float(_pick(row, "最高")) or close,
                     low=_to_float(_pick(row, "最低")) or close,

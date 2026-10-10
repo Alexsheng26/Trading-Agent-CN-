@@ -3,7 +3,7 @@
 // 分析页：选股 -> 设周期 -> 跑流水线，实时看每个智能体的产出。
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { AgentCard } from "@/components/AgentCard";
 import { DecisionPanel } from "@/components/DecisionPanel";
 import { DepthPicker, RunConfigLine } from "@/components/DepthPicker";
@@ -20,9 +20,11 @@ import { fmtMoney, fmtNum, fmtPct } from "@/lib/format";
 import { isEtfSymbol, priceDecimals } from "@/lib/symbols";
 import { useAnalysisStream } from "@/lib/useAnalysisStream";
 import { useLiveQuote } from "@/lib/useLiveQuote";
+import { useWatchlistCodes } from "@/lib/useWatchlistCodes";
 import type {
   AnalysisOptions,
   Bar,
+  BarPeriod,
   Depth,
   FundInfo,
   Horizon,
@@ -46,6 +48,37 @@ function saveDepth(d: Depth): void {
     window.localStorage.setItem(DEPTH_KEY, d);
   } catch {
     // 隐私模式等场景写不进去，无所谓
+  }
+}
+
+// K 线周期。2 小时线由 60 分钟线合成（上午、下午各一根），周线由日线合成
+const PERIOD_KEY = "analyze.barPeriod";
+const PERIODS: { value: BarPeriod; label: string; days: number; hint: string }[] = [
+  { value: "120m", label: "2小时", days: 90, hint: "近 3 个月 · 上午、下午各一根" },
+  { value: "day", label: "日K", days: 250, hint: "近 8 个月 · 前复权" },
+  { value: "week", label: "周K", days: 1100, hint: "近 3 年" },
+];
+// 日线、周线一天里基本不动；2 小时线盘中最后一根还在走，缓存短一些
+const BARS_CACHE_MS: Record<BarPeriod, number> = {
+  "120m": 60_000,
+  day: 10 * 60_000,
+  week: 10 * 60_000,
+};
+
+function loadPeriod(): BarPeriod | null {
+  try {
+    const v = window.localStorage.getItem(PERIOD_KEY);
+    return v === "120m" || v === "day" || v === "week" ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+function savePeriod(p: BarPeriod): void {
+  try {
+    window.localStorage.setItem(PERIOD_KEY, p);
+  } catch {
+    // 写不进去就算了，下次用默认的日 K
   }
 }
 
@@ -81,8 +114,14 @@ function AnalyzeInner() {
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [period, setPeriod] = useState<BarPeriod>("day");
   const [bars, setBars] = useState<Bar[]>([]);
+  const [barsLoading, setBarsLoading] = useState(false);
+  const [barsError, setBarsError] = useState<string | null>(null);
+  // 切回看过的周期时先把上次的图画出来，不用干等
+  const barsCache = useRef(new Map<string, { bars: Bar[]; at: number }>());
   const [indicators, setIndicators] = useState<Indicators | null>(null);
+  const watch = useWatchlistCodes();
   // ETF 概况与重仓股（只有 ETF 才拉）
   const [fund, setFund] = useState<FundInfo | null>(null);
   const [fundLoading, setFundLoading] = useState(false);
@@ -97,6 +136,8 @@ function AnalyzeInner() {
   useEffect(() => {
     const saved = loadDepth();
     if (saved) setDepth(saved);
+    const savedPeriod = loadPeriod();
+    if (savedPeriod) setPeriod(savedPeriod);
     let alive = true;
     api
       .analysisOptions()
@@ -117,30 +158,64 @@ function AnalyzeInner() {
     saveDepth(d);
   }, []);
 
+  const pickPeriod = useCallback((p: BarPeriod) => {
+    setPeriod(p);
+    savePeriod(p);
+  }, []);
+
   // 换标的时清掉上一次的结果
   useEffect(() => {
     setRunId(runIdParam);
   }, [runIdParam]);
 
+  // 指标、斐波那契都按日线算，和图上选的周期无关
   useEffect(() => {
     if (!symbol) {
-      setBars([]);
       setIndicators(null);
       return;
     }
     let alive = true;
-    void Promise.all([
-      api.bars(symbol, 250).catch(() => [] as Bar[]),
-      api.indicators(symbol).catch(() => null),
-    ]).then(([b, i]) => {
-      if (!alive) return;
-      setBars(b);
-      setIndicators(i);
-    });
+    api
+      .indicators(symbol)
+      .then((i) => alive && setIndicators(i))
+      .catch(() => alive && setIndicators(null));
     return () => {
       alive = false;
     };
   }, [symbol]);
+
+  useEffect(() => {
+    setBarsLoading(false);
+    setBarsError(null);
+    if (!symbol) {
+      setBars([]);
+      return;
+    }
+    const key = `${symbol}|${period}`;
+    const cached = barsCache.current.get(key);
+    // 有缓存先画缓存；没有就清空显示"加载中"—— 别让上一个周期的图顶着新周期的标签
+    setBars(cached?.bars ?? []);
+    if (cached && Date.now() - cached.at < BARS_CACHE_MS[period]) return;
+
+    const controller = new AbortController();
+    const days = PERIODS.find((p) => p.value === period)?.days ?? 250;
+    setBarsLoading(true);
+    api
+      .bars(symbol, days, period, controller.signal)
+      .then((b) => {
+        barsCache.current.set(key, { bars: b, at: Date.now() });
+        setBars(b);
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return;
+        // 手上有旧图就继续显示旧图，没有才报错
+        if (!cached) setBarsError(err instanceof Error ? err.message : "取不到 K 线");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setBarsLoading(false);
+      });
+    return () => controller.abort();
+  }, [symbol, period]);
 
   useEffect(() => {
     setFund(null);
@@ -185,6 +260,8 @@ function AnalyzeInner() {
         <StockSearch
           autoFocus
           onPick={(s) => router.push(`/analyze?symbol=${encodeURIComponent(s.symbol)}`)}
+          onAdd={(s) => watch.add(s.symbol)}
+          isAdded={watch.has}
         />
       </div>
     );
@@ -194,6 +271,12 @@ function AnalyzeInner() {
   const running = runId !== null && !stream.finished;
   // ETF 三位小数（最小变动 0.001 元）
   const digits = priceDecimals(symbol, quote);
+  const periodInfo = PERIODS.find((p) => p.value === period) ?? PERIODS[1];
+  const chartEmpty = barsError
+    ? `${periodInfo.label}线取不到：${barsError}`
+    : barsLoading
+      ? "加载中…"
+      : "暂无 K 线数据";
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-4 md:px-6 md:py-6">
@@ -204,6 +287,7 @@ function AnalyzeInner() {
             {indicators.fib.direction}段 · 已回撤 {fmtNum(indicators.fib.retracement_pct, 0)}%
           </span>
         )}
+        <WatchToggle symbol={symbol} watch={watch} />
       </LivePrice>
 
       {/* ---------- 关键指标统计块 ---------- */}
@@ -237,7 +321,42 @@ function AnalyzeInner() {
         </div>
       )}
 
-      <PriceChart bars={bars} fib={indicators?.fib} showFib={showFib} decimals={digits} />
+      {/* ---------- K 线（2 小时 / 日 K / 周 K） ---------- */}
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <span className="text-[11px] text-[var(--muted)]">
+          {periodInfo.hint}
+          {barsLoading && bars.length > 0 ? " · 更新中…" : ""}
+        </span>
+        <div
+          role="tablist"
+          aria-label="K 线周期"
+          className="inline-flex shrink-0 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-0.5"
+        >
+          {PERIODS.map((p) => (
+            <button
+              key={p.value}
+              type="button"
+              role="tab"
+              aria-selected={period === p.value}
+              onClick={() => pickPeriod(p.value)}
+              className={`rounded-md px-3 py-1 text-xs transition-colors ${
+                period === p.value
+                  ? "bg-[var(--accent)] text-white"
+                  : "text-[var(--muted)] hover:text-[var(--text)]"
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <PriceChart
+        bars={bars}
+        fib={indicators?.fib}
+        showFib={showFib}
+        decimals={digits}
+        emptyText={chartEmpty}
+      />
 
       {indicators?.fib && (
         <div className="mt-3">
@@ -410,6 +529,52 @@ function AnalyzeInner() {
         </div>
       )}
     </div>
+  );
+}
+
+/** 个股页头部的「加自选 / 已自选」。看了不代表要加，加不加由这里决定 */
+function WatchToggle({
+  symbol,
+  watch,
+}: {
+  symbol: string;
+  watch: ReturnType<typeof useWatchlistCodes>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const added = watch.has(symbol);
+
+  const toggle = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (added) await watch.remove(symbol);
+      else await watch.add(symbol);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "操作失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <span className="ml-auto flex items-center gap-2 self-center">
+      {error && <span className="text-[10px] text-[var(--warn)]">{error}</span>}
+      <button
+        type="button"
+        onClick={() => void toggle()}
+        disabled={busy}
+        aria-pressed={added}
+        title={added ? "点一下移出自选" : "加入自选，首页就能看到它的实时价格"}
+        className={`rounded-md border px-2.5 py-1 text-xs disabled:opacity-50 ${
+          added
+            ? "border-[var(--border)] text-[var(--muted)] hover:text-[var(--up)]"
+            : "border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent-soft)]"
+        }`}
+      >
+        {busy ? "处理中…" : added ? "★ 已自选" : "☆ 加自选"}
+      </button>
+    </span>
   );
 }
 

@@ -6,6 +6,7 @@ import asyncio
 import logging
 from dataclasses import asdict
 from datetime import date, timedelta
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -15,6 +16,7 @@ from app.data.registry import get_registry, short_error
 from app.data.symbols import normalize, try_normalize
 from app.schemas.market import BarOut, IndexQuoteOut, IndicatorsOut, QuoteOut, StockBasicOut
 from app.services import symbol_index
+from app.services.bar_periods import to_two_hour, to_weekly
 from app.services.indicators import compute_snapshot
 from app.services.market_data import MarketDataService
 from app.services.market_session import session_state
@@ -134,23 +136,38 @@ async def quote(symbol: str) -> QuoteOut:
     return QuoteOut.from_quote(q)
 
 
-@router.get("/bars/{symbol}", response_model=list[BarOut], summary="日线K线")
+@router.get("/bars/{symbol}", response_model=list[BarOut], summary="K线（日线 / 周线 / 2 小时）")
 async def bars(
     symbol: str,
     days: int = Query(default=120, ge=5, le=1200, description="回溯自然日数"),
-    adjust: str = Query(default="qfq", pattern="^(qfq|hfq|none)$", description="复权方式"),
+    adjust: str = Query(
+        default="qfq",
+        pattern="^(qfq|hfq|none)$",
+        description="复权方式（只对日线、周线生效；分钟线由数据源决定）",
+    ),
+    period: Literal["day", "week", "120m", "60m"] = Query(
+        default="day", description="周期：日线 / 周线 / 2 小时 / 60 分钟"
+    ),
 ) -> list[BarOut]:
     sym = _symbol(symbol)
     end = date.today()
+    start = end - timedelta(days=days)
+    registry = get_registry()
     try:
-        rows = await get_registry().daily_bars(
-            sym, end - timedelta(days=days), end, "" if adjust == "none" else adjust
-        )
+        if period in ("120m", "60m"):
+            rows = await registry.minute_bars(sym, 60, start, end)
+            if period == "120m":
+                rows = to_two_hour(rows)
+        else:
+            rows = await registry.daily_bars(sym, start, end, "" if adjust == "none" else adjust)
+            if period == "week":
+                rows = to_weekly(rows)
     except DataNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return [
         BarOut(
             date=b.date,
+            time=b.time,
             open=b.open,
             high=b.high,
             low=b.low,
@@ -307,10 +324,12 @@ async def diagnose() -> dict:
     from app.data.base import (  # noqa: PLC0415
         CAP_BARS,
         CAP_ETF_BARS,
+        CAP_ETF_MINUTE_BARS,
         CAP_ETF_QUOTE,
         CAP_FUND_HOLDINGS,
         CAP_FUND_PROFILE,
         CAP_INDEXES,
+        CAP_MINUTE_BARS,
         CAP_NEWS,
         CAP_QUOTE,
         CAP_SEARCH,
@@ -327,12 +346,21 @@ async def diagnose() -> dict:
         CAP_SEARCH: ("搜索", lambda p: p.search("600519", 1)),
         CAP_QUOTE: ("实时行情", lambda p: p.quote(probe_symbol)),
         CAP_BARS: ("日线", lambda p: p.daily_bars(probe_symbol, end - timedelta(days=10), end)),
+        # 回看两周：一周的话碰上长假（国庆、春节）就是空的
+        CAP_MINUTE_BARS: (
+            "60 分钟线",
+            lambda p: p.minute_bars(probe_symbol, 60, end - timedelta(days=14), end),
+        ),
         CAP_NEWS: ("新闻", lambda p: p.news(probe_symbol, 1)),
         CAP_INDEXES: ("大盘指数", lambda p: p.index_quotes()),
         CAP_ETF_QUOTE: ("ETF 行情", lambda p: p.quote(probe_etf)),
         CAP_ETF_BARS: (
             "ETF 日线",
             lambda p: p.daily_bars(probe_etf, end - timedelta(days=10), end),
+        ),
+        CAP_ETF_MINUTE_BARS: (
+            "ETF 60 分钟线",
+            lambda p: p.minute_bars(probe_etf, 60, end - timedelta(days=14), end),
         ),
         CAP_FUND_PROFILE: ("ETF 概况", lambda p: p.fund_profile(probe_etf)),
         CAP_FUND_HOLDINGS: ("ETF 持仓", lambda p: p.fund_holdings(probe_etf)),

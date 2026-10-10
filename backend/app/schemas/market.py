@@ -57,6 +57,8 @@ class QuoteOut(BaseModel):
 
 class BarOut(BaseModel):
     date: date
+    #: 分钟级 K 线（2 小时线等）这根走完的时刻，北京时间、不带时区。日线、周线为空
+    time: datetime | None = None
     open: float
     high: float
     low: float

@@ -73,11 +73,26 @@ class TushareProvider:
         return self._api
 
     async def _call(self, api_name: str, /, **kwargs: Any) -> Any:
+        """调服务端接口（daily、stock_basic 这类，pro_api() 上点出来的都是）。"""
         api = self._client()
         try:
             return await asyncio.to_thread(lambda: getattr(api, api_name)(**kwargs))
         except Exception as exc:
             raise ProviderUnavailable(f"tushare.{api_name}() 调用失败：{exc}") from exc
+
+    async def _call_helper(self, func_name: str, /, **kwargs: Any) -> Any:
+        """调 tushare 包里的辅助函数（如 pro_bar）。
+
+        它们不是服务端接口：当成 `api.pro_bar(...)` 调的话，pro_api() 会把函数名
+        原样当接口名发给服务端，只会得到"请指定正确的接口名" —— 用户诊断里真出现过。
+        """
+        api = self._client()
+        import tushare as ts  # noqa: PLC0415 —— _client() 已确认装了
+
+        try:
+            return await asyncio.to_thread(lambda: getattr(ts, func_name)(api=api, **kwargs))
+        except Exception as exc:
+            raise ProviderUnavailable(f"tushare.{func_name}() 调用失败：{exc}") from exc
 
     async def healthcheck(self) -> bool:
         if not self._token:
@@ -177,13 +192,18 @@ class TushareProvider:
         self, symbol: Symbol, start: date, end: date, adjust: str = "qfq"
     ) -> list[Bar]:
         adj = {"qfq": "qfq", "hfq": "hfq", "": None, "none": None}.get(adjust, "qfq")
-        df = await self._call(
-            "pro_bar" if adj else "daily",
-            ts_code=symbol.tushare,
-            start_date=start.strftime("%Y%m%d"),
-            end_date=end.strftime("%Y%m%d"),
-            **({"adj": adj, "freq": "D", "asset": "E"} if adj else {}),
-        )
+        span = {
+            "ts_code": symbol.tushare,
+            "start_date": f"{start:%Y%m%d}",
+            "end_date": f"{end:%Y%m%d}",
+        }
+        if adj:
+            # 复权日线由 pro_bar 在本地拼（daily + adj_factor），它是包里的函数不是接口
+            df = await self._call_helper("pro_bar", adj=adj, freq="D", asset="E", **span)
+        else:
+            df = await self._call("daily", **span)
+        if df is None:  # pro_bar 取不到时可能直接返回 None
+            return []
         bars: list[Bar] = []
         for _, row in df.iterrows():
             d = _parse_date(row.get("trade_date"))

@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from app.core.clock import now_utc
@@ -48,8 +48,10 @@ from app.data.base import (
     CAP_BARS,
     CAP_ETF_BARS,
     CAP_ETF_LIST,
+    CAP_ETF_MINUTE_BARS,
     CAP_ETF_QUOTE,
     CAP_INDEXES,
+    CAP_MINUTE_BARS,
     CAP_QUOTE,
     CAP_SEARCH,
     Bar,
@@ -190,10 +192,12 @@ class SinaProvider(_AkshareBacked):
         {
             CAP_QUOTE,
             CAP_BARS,
+            CAP_MINUTE_BARS,
             CAP_INDEXES,
             CAP_SEARCH,
             CAP_ETF_QUOTE,
             CAP_ETF_BARS,
+            CAP_ETF_MINUTE_BARS,
             CAP_ETF_LIST,
         }
     )
@@ -284,6 +288,39 @@ class SinaProvider(_AkshareBacked):
             )
         # 新浪这个接口不给涨跌幅。不补的话，简报里"最近 20 日量价"那张表
         # 的涨跌幅一栏整列都是"数据缺失"，模型看不到每天的涨跌
+        return _fill_change_pct(bars)
+
+    async def minute_bars(self, symbol: Symbol, period: int, start: date, end: date) -> list[Bar]:
+        """新浪分钟线（股票、ETF 同一个接口，最近约 1970 根）。
+
+        不复权：akshare 的复权要再把全部日线拉一遍、逐日折算，太慢。2 小时图看的是
+        最近一两个月，期间赶上除权的概率不大；赶上了会在那天看到一个缺口。
+        东财通的时候走东财（前复权），这里只是备份。
+        """
+        df = await self._call(
+            "stock_zh_a_minute", symbol=symbol.sina, period=str(period), adjust=""
+        )
+        if df is None or df.empty:
+            return []
+        bars: list[Bar] = []
+        for _, row in df.iterrows():
+            t = _as_datetime(row.get("day"))
+            close = _num(row.get("close"))
+            if t is None or close is None or not start <= t.date() <= end:
+                continue
+            bars.append(
+                Bar(
+                    date=t.date(),
+                    time=t,
+                    open=_num(row.get("open")) or close,
+                    high=_num(row.get("high")) or close,
+                    low=_num(row.get("low")) or close,
+                    close=close,
+                    volume=_num(row.get("volume")) or 0.0,
+                    amount=_num(row.get("amount")) or 0.0,
+                )
+            )
+        bars.sort(key=lambda b: b.time or datetime.min)
         return _fill_change_pct(bars)
 
     # ---------------- ETF ----------------
@@ -472,6 +509,19 @@ def _num(value: Any) -> float | None:
         return float(text)
     except (TypeError, ValueError):
         return None
+
+
+def _as_datetime(value: Any) -> datetime | None:
+    """"2026-10-09 10:30:00" -> datetime。只有日期没有时刻的不算（分钟线必须有时刻）。"""
+    if isinstance(value, datetime):
+        return value
+    text = str(value or "").strip()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
 
 
 def _as_date(value: Any) -> date | None:

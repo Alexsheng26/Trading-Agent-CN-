@@ -70,6 +70,8 @@ class Bar:
     amount: float = 0.0
     change_pct: float | None = None
     turnover_rate: float | None = None
+    #: 分钟级 K 线这根走完的时刻（北京时间，不带时区）。日线、周线为 None
+    time: datetime | None = None
 
 
 @dataclass(slots=True)
@@ -187,6 +189,8 @@ CAP_FINANCIALS = "financials"
 CAP_NEWS = "news"
 CAP_MONEY_FLOW = "money_flow"
 CAP_INDEXES = "index_quotes"
+# 分钟级 K 线（2 小时图由 60 分钟线合成）
+CAP_MINUTE_BARS = "minute_bars"
 
 # ETF 单独成一组能力。同一个 `quote()` / `daily_bars()` 方法，股票和 ETF
 # 走的是不同能力标识 —— 因为"能取股票行情"不代表"能取 ETF 行情"：
@@ -195,6 +199,7 @@ CAP_INDEXES = "index_quotes"
 # 派给一个只会查股票的源，报错里也能如实写"未声明支持 ETF"。
 CAP_ETF_QUOTE = "etf_quote"
 CAP_ETF_BARS = "etf_bars"
+CAP_ETF_MINUTE_BARS = "etf_minute_bars"
 CAP_ETF_LIST = "etf_list"
 CAP_FUND_PROFILE = "fund_profile"
 CAP_FUND_HOLDINGS = "fund_holdings"
@@ -208,8 +213,10 @@ ALL_CAPABILITIES = (
     CAP_NEWS,
     CAP_MONEY_FLOW,
     CAP_INDEXES,
+    CAP_MINUTE_BARS,
     CAP_ETF_QUOTE,
     CAP_ETF_BARS,
+    CAP_ETF_MINUTE_BARS,
     CAP_ETF_LIST,
     CAP_FUND_PROFILE,
     CAP_FUND_HOLDINGS,
@@ -251,6 +258,13 @@ class DataProvider(Protocol):
     async def daily_bars(
         self, symbol: Symbol, start: date, end: date, adjust: str = "qfq"
     ) -> list[Bar]: ...
+
+    async def minute_bars(self, symbol: Symbol, period: int, start: date, end: date) -> list[Bar]:
+        """`period` 分钟一根的 K 线（目前只用 60），每根带 `time`（这根走完的时刻）。
+
+        股票（CAP_MINUTE_BARS）和 ETF（CAP_ETF_MINUTE_BARS）共用。
+        """
+        ...
 
     async def financials(self, symbol: Symbol, periods: int = 8) -> list[FinancialReport]: ...
 
