@@ -32,6 +32,9 @@
 **ETF**：两个源都能提供 ETF 行情，新浪还能提供 ETF 日线和全部 ETF 列表。
 ETF 的实时价先走 hq.sinajs.cn，取不到再退回新浪那张"全部 ETF 列表"
 （一个请求带齐所有 ETF 的价格）。
+
+**伦敦金**：新浪外盘期货里的 XAU —— 实时价走 hq.sinajs.cn（hf_XAU），
+日线走 stock2.finance.sina.com.cn。
 """
 
 from __future__ import annotations
@@ -42,7 +45,7 @@ from datetime import date, datetime
 from typing import Any
 
 from app.core.clock import now_utc
-from app.core.errors import ProviderUnavailable
+from app.core.errors import CapabilityNotSupported, ProviderUnavailable
 from app.data import sina_hq
 from app.data.base import (
     CAP_BARS,
@@ -50,15 +53,19 @@ from app.data.base import (
     CAP_ETF_LIST,
     CAP_ETF_MINUTE_BARS,
     CAP_ETF_QUOTE,
+    CAP_GOLD_LONDON_BARS,
+    CAP_GOLD_LONDON_QUOTE,
     CAP_INDEXES,
     CAP_MINUTE_BARS,
     CAP_QUOTE,
     CAP_SEARCH,
     Bar,
+    GoldQuote,
     IndexQuote,
     Quote,
     StockBasic,
 )
+from app.data.gold import LONDON_XAU
 from app.data.symbols import Symbol, try_normalize
 
 log = logging.getLogger(__name__)
@@ -185,7 +192,7 @@ class XueqiuProvider(_AkshareBacked):
 
 
 class SinaProvider(_AkshareBacked):
-    """新浪的实时价、日线、大盘指数与全市场列表。主机是 *.sina.com.cn，和东方财富无关。"""
+    """新浪的实时价、日线、大盘指数、全市场列表与伦敦金。主机是 *.sina.com.cn，和东方财富无关。"""
 
     name = "sina"
     capabilities = frozenset(
@@ -199,6 +206,8 @@ class SinaProvider(_AkshareBacked):
             CAP_ETF_BARS,
             CAP_ETF_MINUTE_BARS,
             CAP_ETF_LIST,
+            CAP_GOLD_LONDON_QUOTE,
+            CAP_GOLD_LONDON_BARS,
         }
     )
 
@@ -466,6 +475,99 @@ class SinaProvider(_AkshareBacked):
             raise ProviderUnavailable("新浪指数列表里没有需要的指数")
         return out
 
+    # ---------------- 伦敦金 ----------------
+
+    #: 我们的品种代码 -> 新浪外盘期货代码
+    _LONDON = {LONDON_XAU: "XAU"}
+
+    def _london_code(self, code: str) -> str:
+        sina_code = self._LONDON.get(code)
+        if sina_code is None:
+            raise CapabilityNotSupported(f"新浪外盘没有 {code}")
+        return sina_code
+
+    async def gold_quote(self, code: str) -> GoldQuote:
+        """伦敦金实时价（hq.sinajs.cn 的 hf_XAU）。涨跌按昨收算。"""
+        from app.core.config import get_settings  # noqa: PLC0415 —— 避免循环导入
+        from app.data.cache import cache  # noqa: PLC0415
+
+        sina_code = self._london_code(code)
+
+        async def load() -> GoldQuote:
+            df = await self._call("futures_foreign_commodity_realtime", symbol=sina_code)
+            if df is None or df.empty:
+                raise ProviderUnavailable(f"新浪没返回 {sina_code} 的行情")
+            return parse_london_quote(code, df.iloc[0])
+
+        return await cache.get_or_set(
+            f"sina:gold_quote:{code}", get_settings().quote_cache_ttl, load
+        )
+
+    async def gold_bars(self, code: str, start: date, end: date) -> list[Bar]:
+        """伦敦金日线。接口一次给全部历史，按小时缓存。"""
+        from app.core.config import get_settings  # noqa: PLC0415 —— 避免循环导入
+        from app.data.cache import cache  # noqa: PLC0415
+
+        sina_code = self._london_code(code)
+
+        async def load() -> list[Bar]:
+            df = await self._call("futures_foreign_hist", symbol=sina_code)
+            if df is None or df.empty:
+                raise ProviderUnavailable(f"新浪没返回 {sina_code} 的日线")
+            return parse_london_bars(df)
+
+        bars = await cache.get_or_set(
+            f"sina:gold_bars:{code}", get_settings().history_cache_ttl, load
+        )
+        return [b for b in bars if start <= b.date <= end]
+
+
+# ---------------------------------------------------------------- 伦敦金解析
+
+
+def parse_london_quote(code: str, row: Any) -> GoldQuote:
+    """futures_foreign_commodity_realtime 的一行 -> 报价。
+
+    "昨日结算价"对伦敦金来说就是昨收；时间是北京时间（日期 + 行情时间两列）。
+    """
+    price = _num(row.get("最新价"))
+    if price is None or price <= 0:
+        raise ProviderUnavailable("新浪没返回伦敦金的价格")
+    prev = _positive(row.get("昨日结算价"))
+    return GoldQuote(
+        code=code,
+        price=price,
+        prev_close=prev,
+        change=round(price - prev, 4) if prev else None,
+        change_pct=round((price / prev - 1) * 100, 2) if prev else None,
+        open=_positive(row.get("开盘价")),
+        high=_positive(row.get("最高价")),
+        low=_positive(row.get("最低价")),
+        as_of=_as_datetime(f"{row.get('日期') or ''} {row.get('行情时间') or ''}".strip()),
+    )
+
+
+def parse_london_bars(df: Any) -> list[Bar]:
+    """futures_foreign_hist 的返回（date / open / high / low / close / volume）-> 日线。"""
+    bars: list[Bar] = []
+    for _, row in df.iterrows():
+        d = _as_date(row.get("date"))
+        close = _positive(row.get("close"))
+        if d is None or close is None:
+            continue
+        bars.append(
+            Bar(
+                date=d,
+                open=_positive(row.get("open")) or close,
+                high=_positive(row.get("high")) or close,
+                low=_positive(row.get("low")) or close,
+                close=close,
+                volume=_num(row.get("volume")) or 0.0,
+            )
+        )
+    bars.sort(key=lambda b: b.date)
+    return _fill_change_pct(bars)
+
 
 # ---------------------------------------------------------------- 小工具
 
@@ -524,9 +626,18 @@ def _as_datetime(value: Any) -> datetime | None:
     return None
 
 
+def _positive(value: Any) -> float | None:
+    """价格类字段：0 和负数都当没有（外盘接口没开盘时开高低常常是 0）。"""
+    number = _num(value)
+    return number if number is not None and number > 0 else None
+
+
 def _as_date(value: Any) -> date | None:
     if value is None:
         return None
+    if isinstance(value, datetime):
+        # pandas 的 Timestamp 也是 datetime：要取日期部分，不然和 date 比较会出错
+        return value.date()
     if isinstance(value, date):
         return value
     text = str(value)[:10].replace("/", "-")

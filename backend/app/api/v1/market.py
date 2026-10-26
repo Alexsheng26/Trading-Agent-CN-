@@ -328,12 +328,17 @@ async def diagnose() -> dict:
         CAP_ETF_QUOTE,
         CAP_FUND_HOLDINGS,
         CAP_FUND_PROFILE,
+        CAP_GOLD_LONDON_BARS,
+        CAP_GOLD_LONDON_QUOTE,
+        CAP_GOLD_SGE_BARS,
+        CAP_GOLD_SGE_INTRADAY,
         CAP_INDEXES,
         CAP_MINUTE_BARS,
         CAP_NEWS,
         CAP_QUOTE,
         CAP_SEARCH,
     )
+    from app.data.gold import LONDON_XAU, SGE_AU9999  # noqa: PLC0415
 
     registry = get_registry()
     probe_symbol = normalize("600519")
@@ -341,6 +346,10 @@ async def diagnose() -> dict:
     # 用户关心的 512480 / 512400 正好都是沪市
     probe_etf = normalize("512480")
     end = date.today()
+
+    async def sge_points(p):  # type: ignore[no-untyped-def]
+        # 报"返回 N 条"时数的是分时点数
+        return (await p.gold_intraday(SGE_AU9999)).points
 
     probes: dict[str, tuple[str, object]] = {
         CAP_SEARCH: ("搜索", lambda p: p.search("600519", 1)),
@@ -364,6 +373,17 @@ async def diagnose() -> dict:
         ),
         CAP_FUND_PROFILE: ("ETF 概况", lambda p: p.fund_profile(probe_etf)),
         CAP_FUND_HOLDINGS: ("ETF 持仓", lambda p: p.fund_holdings(probe_etf)),
+        # 金价：名字统一以"金价"开头，前端按这个前缀单独给一句结论
+        CAP_GOLD_SGE_BARS: (
+            "金价·上金所日线",
+            lambda p: p.gold_bars(SGE_AU9999, end - timedelta(days=14), end),
+        ),
+        CAP_GOLD_SGE_INTRADAY: ("金价·上金所分时", sge_points),
+        CAP_GOLD_LONDON_QUOTE: ("金价·伦敦金行情", lambda p: p.gold_quote(LONDON_XAU)),
+        CAP_GOLD_LONDON_BARS: (
+            "金价·伦敦金日线",
+            lambda p: p.gold_bars(LONDON_XAU, end - timedelta(days=14), end),
+        ),
     }
 
     from app.core.runtime import current_runtime, restart_hint  # noqa: PLC0415

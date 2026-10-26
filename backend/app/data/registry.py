@@ -29,6 +29,10 @@ from app.data.base import (
     CAP_FINANCIALS,
     CAP_FUND_HOLDINGS,
     CAP_FUND_PROFILE,
+    CAP_GOLD_LONDON_BARS,
+    CAP_GOLD_LONDON_QUOTE,
+    CAP_GOLD_SGE_BARS,
+    CAP_GOLD_SGE_INTRADAY,
     CAP_INDEXES,
     CAP_MINUTE_BARS,
     CAP_MONEY_FLOW,
@@ -40,12 +44,15 @@ from app.data.base import (
     FinancialReport,
     FundHolding,
     FundProfile,
+    GoldIntraday,
+    GoldQuote,
     IndexQuote,
     MoneyFlow,
     NewsItem,
     Quote,
     StockBasic,
 )
+from app.data.gold import SGE_AU9999
 from app.data.mock_provider import MockProvider
 from app.data.symbols import Symbol
 from app.data.tushare_provider import TushareProvider
@@ -285,6 +292,21 @@ class ProviderRegistry:
 
     async def fund_holdings(self, symbol: Symbol) -> list[FundHolding]:
         return await self._dispatch(CAP_FUND_HOLDINGS, lambda p: p.fund_holdings(symbol))
+
+    # ---------------- 黄金 ----------------
+    # 两个品种来自完全不同的站点，按品种走不同的能力标识（见 base.py 的 CAP_GOLD_*）
+
+    async def gold_bars(self, code: str, start: date, end: date) -> list[Bar]:
+        cap = CAP_GOLD_SGE_BARS if code == SGE_AU9999 else CAP_GOLD_LONDON_BARS
+        return await self._dispatch(cap, lambda p: p.gold_bars(code, start, end))
+
+    async def gold_intraday(self, code: str) -> GoldIntraday:
+        """只有上金所有分时。"""
+        return await self._dispatch(CAP_GOLD_SGE_INTRADAY, lambda p: p.gold_intraday(code))
+
+    async def gold_quote(self, code: str) -> GoldQuote:
+        """只有伦敦金有现成的实时报价；上金所的由分时和日线拼（见 services/gold.py）。"""
+        return await self._dispatch(CAP_GOLD_LONDON_QUOTE, lambda p: p.gold_quote(code))
 
 
 def _is_empty(value: Any) -> bool:

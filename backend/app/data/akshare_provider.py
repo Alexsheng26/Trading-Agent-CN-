@@ -8,6 +8,8 @@ AKShare 免费、免注册、覆盖面广，是本项目的默认数据源。
 
 ETF 走另一组接口（东财 `fund_etf_*` + 天天基金档案），见各方法里的分支。
 
+上金所金价（日线 + 分时）也在这里：数据来自上海黄金交易所官网，和东财无关。
+
 安装：pip install -e ".[akshare]"
 """
 
@@ -20,7 +22,7 @@ from datetime import date, datetime
 from typing import Any
 
 from app.core.clock import now_cst, now_utc
-from app.core.errors import ProviderUnavailable
+from app.core.errors import CapabilityNotSupported, ProviderUnavailable
 from app.data.base import (
     CAP_BARS,
     CAP_BASIC,
@@ -31,6 +33,8 @@ from app.data.base import (
     CAP_FINANCIALS,
     CAP_FUND_HOLDINGS,
     CAP_FUND_PROFILE,
+    CAP_GOLD_SGE_BARS,
+    CAP_GOLD_SGE_INTRADAY,
     CAP_INDEXES,
     CAP_MINUTE_BARS,
     CAP_MONEY_FLOW,
@@ -41,12 +45,14 @@ from app.data.base import (
     FinancialReport,
     FundHolding,
     FundProfile,
+    GoldIntraday,
     IndexQuote,
     MoneyFlow,
     NewsItem,
     Quote,
     StockBasic,
 )
+from app.data.gold import SGE_AU9999, arrange_sge_grid, parse_sge_as_of
 from app.data.symbols import Symbol, try_normalize
 
 log = logging.getLogger(__name__)
@@ -71,6 +77,8 @@ class AkshareProvider:
             CAP_ETF_LIST,
             CAP_FUND_PROFILE,
             CAP_FUND_HOLDINGS,
+            CAP_GOLD_SGE_BARS,
+            CAP_GOLD_SGE_INTRADAY,
         }
     )
 
@@ -595,6 +603,88 @@ class AkshareProvider:
             ]
         )
 
+    # ---------------- 黄金（上海黄金交易所官网） ----------------
+
+    #: 我们的品种代码 -> 上金所的合约名
+    _SGE_INSTRUMENTS = {SGE_AU9999: "Au99.99"}
+
+    def _sge_instrument(self, code: str) -> str:
+        instrument = self._SGE_INSTRUMENTS.get(code)
+        if instrument is None:
+            raise CapabilityNotSupported(f"上金所没有 {code}")
+        return instrument
+
+    async def gold_bars(self, code: str, start: date, end: date) -> list[Bar]:
+        """上金所日线（没有成交量）。接口一次给全部历史（2016 年至今），按小时缓存。"""
+        from app.core.config import get_settings  # noqa: PLC0415 —— 避免循环导入
+        from app.data.cache import cache  # noqa: PLC0415
+
+        instrument = self._sge_instrument(code)
+
+        async def load() -> list[Bar]:
+            df = await self._call("spot_hist_sge", symbol=instrument)
+            if df is None or df.empty:
+                raise ProviderUnavailable(f"上金所没返回 {instrument} 的日线")
+            return parse_sge_bars(df)
+
+        bars = await cache.get_or_set(
+            f"akshare:sge_bars:{instrument}", get_settings().history_cache_ttl, load
+        )
+        return [b for b in bars if start <= b.date <= end]
+
+    async def gold_intraday(self, code: str) -> GoldIntraday:
+        """上金所当前交易日的分时（官网延时行情，每分钟一个价）。"""
+        from app.core.config import get_settings  # noqa: PLC0415 —— 避免循环导入
+        from app.data.cache import cache  # noqa: PLC0415
+
+        instrument = self._sge_instrument(code)
+        payload = await cache.get_or_set(
+            f"akshare:sge_grid:{instrument}",
+            get_settings().quote_cache_ttl,
+            lambda: self._sge_grid(instrument),
+        )
+        as_of = parse_sge_as_of(payload.get("delaystr")) or now_cst().replace(tzinfo=None)
+        session = arrange_sge_grid(payload.get("times") or [], payload.get("data") or [], as_of)
+        if not session.points:
+            raise ProviderUnavailable(f"上金所分时里还没有 {session.trading_day} 这个交易日的数据")
+        return GoldIntraday(
+            code=code,
+            trading_day=session.trading_day,
+            as_of=as_of,
+            points=session.points,
+            prev_close=session.prev_close,
+        )
+
+    async def _sge_grid(self, instrument: str) -> dict[str, Any]:
+        """上金所官网首页那张分时图的原始数据。
+
+        不用 akshare 的 spot_quotations_sge：它按时刻排序、再丢掉"晚于更新时间"的格子，
+        白天去取时会把前一晚的夜盘一起丢掉（详见 app/data/gold.py）。
+        请求照抄它（连 GET 带表单这种写法也照抄），并且和 akshare 走同一条路
+        （开了浏览器指纹就是浏览器指纹）。
+        """
+        from app.data.browser_transport import http  # noqa: PLC0415
+
+        self._module()  # 确保 akshare 已导入、浏览器指纹已按设置换好
+
+        def fetch() -> Any:
+            resp = http().get(
+                SGE_GRID_URL,
+                data={"instid": instrument},
+                headers=_SGE_HEADERS,
+                timeout=10,
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+        try:
+            payload = await asyncio.to_thread(fetch)
+        except Exception as exc:
+            raise ProviderUnavailable(f"上金所分时请求失败：{exc}") from exc
+        if not isinstance(payload, dict) or not payload.get("times"):
+            raise ProviderUnavailable("上金所分时的返回格式变了（没有 times）")
+        return payload
+
     # ---------------- 全市场快照（多个接口共用） ----------------
 
     async def _spot(self) -> Any:
@@ -613,6 +703,45 @@ class AkshareProvider:
         return await cache.get_or_set(
             "akshare:spot_em", ttl, lambda: self._call("stock_zh_a_spot_em")
         )
+
+
+# ---------------------------------------------------------------- 上金所
+
+#: 上金所官网首页分时图的数据接口（akshare.spot_quotations_sge 用的也是它）
+SGE_GRID_URL = "https://www.sge.com.cn/graph/quotations"
+
+_SGE_HEADERS = {
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+    "Origin": "https://www.sge.com.cn",
+    "Referer": "https://www.sge.com.cn/",
+    "X-Requested-With": "XMLHttpRequest",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+}
+
+
+def parse_sge_bars(df: Any) -> list[Bar]:
+    """spot_hist_sge 的返回（date / open / close / low / high）-> 日线，按日期升序。"""
+    bars: list[Bar] = []
+    for _, row in df.iterrows():
+        d = _parse_date(_pick(row, "date"))
+        close = _to_float(_pick(row, "close"))
+        if d is None or close is None or close <= 0:
+            continue
+        bars.append(
+            Bar(
+                date=d,
+                open=_to_float(_pick(row, "open")) or close,
+                high=_to_float(_pick(row, "high")) or close,
+                low=_to_float(_pick(row, "low")) or close,
+                close=close,
+            )
+        )
+    bars.sort(key=lambda b: b.date)
+    for prev, cur in zip(bars, bars[1:], strict=False):
+        cur.change_pct = round((cur.close / prev.close - 1) * 100, 2)
+    return bars
 
 
 # ---------------------------------------------------------------- ETF 解析

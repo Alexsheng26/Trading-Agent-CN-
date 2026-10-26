@@ -117,18 +117,21 @@ export function PriceChart({
         })),
       );
 
-      const volume = chart.addSeries(HistogramSeries, {
-        priceFormat: { type: "volume" },
-        priceScaleId: "vol",
-      });
-      volume.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
-      volume.setData(
-        bars.map((b) => ({
-          time: chartTime(b),
-          value: b.volume,
-          color: b.close >= b.open ? `${up}55` : `${down}55`,
-        })),
-      );
+      // 上金所金价这类没有成交量的，不画量柱（不然底下是一条空带）
+      if (bars.some((b) => b.volume > 0)) {
+        const volume = chart.addSeries(HistogramSeries, {
+          priceFormat: { type: "volume" },
+          priceScaleId: "vol",
+        });
+        volume.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+        volume.setData(
+          bars.map((b) => ({
+            time: chartTime(b),
+            value: b.volume,
+            color: b.close >= b.open ? `${up}55` : `${down}55`,
+          })),
+        );
+      }
 
       // 斐波那契价位线。
       // 刻意只画回撤位和摆动端点 —— 扩展位（如 261.8%）远在数据区间之外，

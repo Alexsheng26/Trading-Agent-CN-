@@ -275,6 +275,57 @@ export interface IndexQuote {
   change_pct?: number | null;
 }
 
+// ---------------------------------------------------------------- 金价
+
+export interface GoldQuote {
+  price: number;
+  prev_close?: number | null;
+  change?: number | null;
+  change_pct?: number | null;
+  open?: number | null;
+  high?: number | null;
+  low?: number | null;
+  /** 行情时刻：北京时间、不带时区，如 "2026-10-26T10:00:00" */
+  as_of?: string | null;
+  /** false = 分时取不到，这是最近一根日线的收盘价。必须标注 */
+  is_realtime: boolean;
+  quote_date?: string | null;
+}
+
+/** 一个黄金品种：上金所 Au99.99（元/克）、伦敦金（美元/盎司） */
+export interface GoldItem {
+  code: string;
+  name: string;
+  short_name: string;
+  unit: string;
+  decimals: number;
+  has_intraday: boolean;
+  /** 数据来自哪里 */
+  source: string;
+  quote: GoldQuote | null;
+  /** 取不到时的原因（两个品种各自取、各自失败） */
+  error: string | null;
+}
+
+export interface PricePoint {
+  /** 北京时间、不带时区 */
+  time: string;
+  price: number;
+}
+
+export interface GoldIntraday {
+  code: string;
+  /** 这批分时属于哪个交易日（上金所晚上 20:00 开始的夜盘算下一个交易日） */
+  trading_day: string;
+  as_of?: string | null;
+  /** 上一交易日收盘价，分时图的基准线 */
+  prev_close?: number | null;
+  points: PricePoint[];
+}
+
+/** 金价图：当天分时 / 日 K / 周 K */
+export type GoldPeriod = "intraday" | "day" | "week";
+
 export interface AgentOutput {
   key: string;
   label: string;

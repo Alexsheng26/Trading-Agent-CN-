@@ -263,7 +263,8 @@ def test_capabilities_are_narrow() -> None:
     assert XueqiuProvider().capabilities == {"quote", "etf_quote"}
     # sina 的 search 只给后台建代码目录用（它要翻 60 多页且有封 IP 风险），
     # 请求路径上的搜索查的是本地表。
-    # 实时价走 hq.sinajs.cn（免 token、批量），股票和 ETF 都声明
+    # 实时价走 hq.sinajs.cn（免 token、批量），股票和 ETF 都声明。
+    # 金价只声明伦敦金：上金所的数据在上金所官网，不在新浪
     assert SinaProvider().capabilities == {
         "quote",
         "daily_bars",
@@ -274,6 +275,8 @@ def test_capabilities_are_narrow() -> None:
         "etf_bars",
         "etf_minute_bars",
         "etf_list",
+        "gold_london_quote",
+        "gold_london_bars",
     }
 
 

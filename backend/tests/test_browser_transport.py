@@ -217,6 +217,37 @@ def test_plain_get_works_through_proxy(local_server: str) -> None:
     assert r.json()["data"]["total"] == 1
 
 
+def test_http_is_plain_requests_until_enabled() -> None:
+    # requests 随 akshare 一起装；CI 的后端任务只装 dev 依赖，没有它
+    requests = pytest.importorskip("requests")
+
+    from app.data.browser_transport import http
+
+    assert http() is requests
+
+
+@requires_akshare
+@requires_curl_cffi
+def test_http_follows_akshare_onto_browser_transport(local_server: str) -> None:
+    """我们自己发的请求（上金所分时）要和 akshare 走同一条路：它换了指纹，这里也换。
+
+    上金所那个接口是 GET 带表单的写法（照抄 akshare），也要确认 curl_cffi 发得出去。
+    """
+    import akshare  # noqa: F401
+    import requests
+
+    from app.data.browser_transport import BrowserRequests, disable, enable, http
+
+    enable()
+    assert isinstance(http(), BrowserRequests)
+    r = http().get(local_server, data={"instid": "Au99.99"}, timeout=5)
+    assert r.status_code == 200
+    assert r.json()["data"]["total"] == 1
+
+    disable()
+    assert http() is requests
+
+
 # ---------------------------------------------------------------- 开关
 
 

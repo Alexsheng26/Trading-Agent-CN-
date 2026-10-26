@@ -50,6 +50,10 @@ CALLS: dict[str, tuple[str, ...]] = {
     "stock_zh_a_minute": ("symbol", "period", "adjust"),
     # 雪球（backup_providers.XueqiuProvider），股票和场内基金共用
     "stock_individual_spot_xq": ("symbol", "token"),
+    # 金价：上金所日线（akshare_provider），伦敦金报价和日线（backup_providers）
+    "spot_hist_sge": ("symbol",),
+    "futures_foreign_commodity_realtime": ("symbol",),
+    "futures_foreign_hist": ("symbol",),
 }
 
 
@@ -126,3 +130,49 @@ def test_eastmoney_bid_ask_still_misroutes_sh_etfs() -> None:
 
     source = inspect.getsource(akshare.stock_bid_ask_em)
     assert 'startswith("6")' in source
+
+
+# ---------------------------------------------------------------- 金价
+
+#: 这两个接口的列名同样是在 akshare 源码里写死的（伦敦金日线是直接读 JSON，没法这样核对）
+GOLD_COLUMNS: dict[str, tuple[str, ...]] = {
+    "spot_hist_sge": ("date", "open", "close", "low", "high"),
+    "futures_foreign_commodity_realtime": (
+        "最新价", "昨日结算价", "开盘价", "最高价", "最低价", "行情时间", "日期",
+    ),  # fmt: skip
+}
+
+
+@requires_akshare
+@pytest.mark.parametrize(("name", "columns"), sorted(GOLD_COLUMNS.items()))
+def test_gold_columns_exist_in_source(name: str, columns: tuple[str, ...]) -> None:
+    import akshare
+
+    source = inspect.getsource(getattr(akshare, name))
+    missing = [c for c in columns if f'"{c}"' not in source]
+    assert not missing, f"{name} 的源码里找不到列 {missing} —— 上游改了列名"
+
+
+@requires_akshare
+def test_london_gold_code_is_still_xau() -> None:
+    """伦敦金在新浪外盘里的代码是 XAU。"""
+    import akshare
+
+    table = akshare.futures_hq_subscribe_exchange_symbol()
+    assert "XAU" in set(table["code"])
+
+
+@requires_akshare
+def test_sge_grid_request_matches_akshare() -> None:
+    """上金所分时是我们照着 akshare.spot_quotations_sge 自己发的请求（原因见 app/data/gold.py）。
+
+    akshare 改了这个接口的地址或字段，多半是上金所改版了 —— 我们这份也要跟着改。
+    """
+    import akshare
+
+    from app.data.akshare_provider import SGE_GRID_URL
+
+    source = inspect.getsource(akshare.spot_quotations_sge)
+    assert SGE_GRID_URL in source
+    for key in ("instid", "heyue", "times", "data", "delaystr"):
+        assert f'"{key}"' in source, f"spot_quotations_sge 里找不到 {key}"

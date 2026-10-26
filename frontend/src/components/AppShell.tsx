@@ -13,6 +13,7 @@ import type { SystemStatus } from "@/lib/types";
 const NAV = [
   { href: "/", label: "自选", icon: StarIcon },
   { href: "/analyze", label: "分析", icon: SparkIcon },
+  { href: "/gold", label: "金价", icon: GoldIcon },
   { href: "/runs", label: "历史", icon: HistoryIcon },
   { href: "/settings", label: "设置", icon: GearIcon },
 ];
@@ -200,6 +201,17 @@ function SparkIcon({ className }: { className?: string }) {
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M12 3v4M12 17v4M3 12h4M17 12h4M6.3 6.3l2.8 2.8M14.9 14.9l2.8 2.8M17.7 6.3l-2.8 2.8M9.1 14.9l-2.8 2.8" />
       <circle cx="12" cy="12" r="2.6" />
+    </svg>
+  );
+}
+
+function GoldIcon({ className }: { className?: string }) {
+  // 两块叠着的金条
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3.5 19.5h17l-2.4-5.5H5.9l-2.4 5.5z" />
+      <path d="M7.4 14l2-5h5.2l2 5" />
+      <path d="M12 3.5v1.6M8.4 5l.9 1.1M15.6 5l-.9 1.1" />
     </svg>
   );
 }

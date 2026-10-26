@@ -41,6 +41,8 @@ log = logging.getLogger(__name__)
 
 #: 已替换过的模块 -> 原来的 requests，用于还原
 _patched: dict[str, Any] = {}
+#: 换上去的那个代理。我们自己直接发的请求（不经过 akshare 的函数）也用它，见 `http()`
+_proxy: Any | None = None
 
 
 class _BrowserSession:
@@ -129,6 +131,7 @@ def enable(impersonate: str = "chrome") -> list[str]:
         log.warning("curl_cffi 不可用，akshare 继续用普通 requests：%s", exc)
         return []
 
+    global _proxy
     proxy = BrowserRequests(cffi_requests, real_requests, impersonate)
 
     # 按名字在已导入的模块里找，而不是写死一张清单 ——
@@ -146,6 +149,7 @@ def enable(impersonate: str = "chrome") -> list[str]:
             _patched[name] = current
 
     if _patched:
+        _proxy = proxy
         log.info(
             "已让 %d 个 akshare 模块走浏览器 TLS 指纹（impersonate=%s）",
             len(_patched),
@@ -158,12 +162,27 @@ def enable(impersonate: str = "chrome") -> list[str]:
 
 def disable() -> None:
     """还原。测试用。"""
+    global _proxy
     for name, original in list(_patched.items()):
         module = sys.modules.get(name)
         if module is not None:
             module.requests = original  # type: ignore[attr-defined]
     _patched.clear()
+    _proxy = None
 
 
 def is_enabled() -> bool:
     return bool(_patched)
+
+
+def http() -> Any:
+    """自己直接发请求时用的 `requests`：akshare 走浏览器指纹时它也走，否则就是普通 requests。
+
+    少数地方不用 akshare 的现成函数、照着它的请求自己发（比如上金所分时，原因见
+    app/data/gold.py），这些请求要和 akshare 自己的请求走同一条路。
+    """
+    if _proxy is not None:
+        return _proxy
+    import requests  # noqa: PLC0415 —— akshare 的依赖，装了 akshare 就有
+
+    return requests

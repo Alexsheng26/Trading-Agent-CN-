@@ -22,6 +22,7 @@
   --accent-soft: #14203a;
   --warn: #e0a339;
   --warn-soft: #2a2113;
+  --gold: #d9ae4a;      /* 金价卡片的标识色 */
 
   /* 安全区：iPhone 底部小黑条 */
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -44,6 +45,7 @@
     --accent-soft: #eaf1fd;
     --warn: #b4790f;
     --warn-soft: #fdf4e3;
+    --gold: #a87b12;
   }
 }
 

@@ -12,7 +12,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
-import type { IndexQuote, Quote, SessionInfo } from "./types";
+import type { GoldItem, IndexQuote, Quote, SessionInfo } from "./types";
 
 /** 时段信息拿不到时的保守轮询间隔：功能不能因为一个辅助接口挂了就停摆 */
 const FALLBACK_POLL_MS = 30_000;
@@ -385,4 +385,33 @@ export function useLiveIndexes(): LiveIndexes {
     updatedAt,
     refresh,
   };
+}
+
+// ---------------------------------------------------------------- 金价
+
+/**
+ * 金价一分钟刷一次，不跟 A 股的交易时段走：上金所有夜盘，伦敦金工作日几乎全天在动。
+ * 上金所官网本身就是延时行情，刷得再勤也没用。
+ */
+const GOLD_POLL_MS = 60_000;
+
+export interface LiveGold {
+  items: GoldItem[];
+  updatedAt: number | null;
+  loading: boolean;
+  error: string | null;
+  refresh: () => void;
+}
+
+/** 金价（上金所 Au99.99 + 伦敦金）。首页卡片和金价页共用。 */
+export function useLiveGold(): LiveGold {
+  const visible = useDocumentVisible();
+  const fetcher = useCallback((signal: AbortSignal) => api.gold(signal), []);
+  const { data, updatedAt, loading, error, refresh } = usePolled(
+    "gold",
+    fetcher,
+    GOLD_POLL_MS,
+    visible,
+  );
+  return { items: data ?? [], updatedAt, loading, error, refresh };
 }

@@ -40,9 +40,11 @@ HOSTS: tuple[tuple[str, str], ...] = (
     ("search-api-web.eastmoney.com", "东财-新闻"),
     ("xueqiu.com", "雪球-实时行情（需 token）"),
     ("stock.xueqiu.com", "雪球-行情接口"),
-    ("hq.sinajs.cn", "新浪-实时行情（股票 / ETF，免 token）"),
+    ("hq.sinajs.cn", "新浪-实时行情（股票 / ETF / 伦敦金，免 token）"),
     ("finance.sina.com.cn", "新浪-日线（含 ETF）"),
     ("vip.stock.finance.sina.com.cn", "新浪-大盘指数 / ETF 行情"),
+    ("stock2.finance.sina.com.cn", "新浪-伦敦金日线"),
+    ("www.sge.com.cn", "上海黄金交易所-金价（日线 / 分时）"),
     ("api.tushare.pro", "Tushare"),
 )
 

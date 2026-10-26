@@ -11,6 +11,8 @@ import type {
   Depth,
   Diagnosis,
   FundInfo,
+  GoldIntraday,
+  GoldItem,
   Indicators,
   IndexQuote,
   Quote,
@@ -96,6 +98,18 @@ export const api = {
       `/market/symbols/refresh?wait=${wait}`,
       { method: "POST", signal },
     ),
+
+  // ---------- 金价 ----------
+  /** 上金所 Au99.99 + 伦敦金。两个品种各自取、各自失败（看各自的 error） */
+  gold: (signal?: AbortSignal) => request<GoldItem[]>("/gold", { signal }),
+  goldBars: (code: string, period: "day" | "week", days: number, signal?: AbortSignal) =>
+    request<Bar[]>(
+      `/gold/${encodeURIComponent(code)}/bars?period=${period}&days=${days}`,
+      { signal },
+    ),
+  /** 当前交易日的分时。只有上金所有，伦敦金会返回 404 */
+  goldIntraday: (code: string, signal?: AbortSignal) =>
+    request<GoldIntraday>(`/gold/${encodeURIComponent(code)}/intraday`, { signal }),
 
   // ---------- 分析 ----------
   /** 可选的分析深度与模型。说明文字按当前模型厂商生成 */

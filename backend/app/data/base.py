@@ -157,6 +157,47 @@ class IndexQuote:
 
 
 @dataclass(slots=True)
+class PricePoint:
+    """分时图上的一个点：某一分钟的价格。"""
+
+    time: datetime  # 北京时间，不带时区
+    price: float
+
+
+@dataclass(slots=True)
+class GoldQuote:
+    """一个黄金品种的报价（品种见 app/data/gold.py）。只看行情，不进 AI 分析。"""
+
+    code: str  # AU9999 / XAU
+    price: float
+    prev_close: float | None = None
+    change: float | None = None
+    change_pct: float | None = None
+    open: float | None = None
+    high: float | None = None
+    low: float | None = None
+    #: 这个价格对应的时刻（北京时间，不带时区）。上金所官网本身是延时行情
+    as_of: datetime | None = None
+    #: False = 分时取不到，用最近一根日线的收盘价顶上。界面必须标注
+    is_realtime: bool = True
+    #: 非实时时，这个价格是哪个交易日的收盘价
+    quote_date: date | None = None
+
+
+@dataclass(slots=True)
+class GoldIntraday:
+    """当前交易日的分时。"""
+
+    code: str
+    #: 这批分时属于哪个交易日。上金所有夜盘：20:00 开始的夜盘算下一个交易日
+    trading_day: date
+    as_of: datetime | None
+    points: list[PricePoint] = field(default_factory=list)
+    #: 上一交易日收盘价。分时图上的基准线、涨跌都按它算。确定不了就是 None
+    prev_close: float | None = None
+
+
+@dataclass(slots=True)
 class MarketSnapshot:
     """一次分析所需的全部原始数据。由 MarketDataService 组装。"""
 
@@ -204,6 +245,14 @@ CAP_ETF_LIST = "etf_list"
 CAP_FUND_PROFILE = "fund_profile"
 CAP_FUND_HOLDINGS = "fund_holdings"
 
+# 黄金（只看行情，不进 AI 分析）。两个品种的数据来自完全不同的站点，能力按品种分开声明：
+#   上金所 Au99.99 —— 上海黄金交易所官网：日线 + 当天分时（报价由分时和日线拼出来）
+#   伦敦金         —— 新浪：实时报价 + 日线（免费源里没有可靠的分时）
+CAP_GOLD_SGE_BARS = "gold_sge_bars"
+CAP_GOLD_SGE_INTRADAY = "gold_sge_intraday"
+CAP_GOLD_LONDON_QUOTE = "gold_london_quote"
+CAP_GOLD_LONDON_BARS = "gold_london_bars"
+
 ALL_CAPABILITIES = (
     CAP_SEARCH,
     CAP_BASIC,
@@ -220,6 +269,10 @@ ALL_CAPABILITIES = (
     CAP_ETF_LIST,
     CAP_FUND_PROFILE,
     CAP_FUND_HOLDINGS,
+    CAP_GOLD_SGE_BARS,
+    CAP_GOLD_SGE_INTRADAY,
+    CAP_GOLD_LONDON_QUOTE,
+    CAP_GOLD_LONDON_BARS,
 )
 
 
@@ -286,4 +339,16 @@ class DataProvider(Protocol):
 
     async def fund_holdings(self, symbol: Symbol) -> list[FundHolding]:
         """最近一期披露的重仓股，按占净值比例降序。"""
+        ...
+
+    async def gold_bars(self, code: str, start: date, end: date) -> list[Bar]:
+        """黄金日线（`code` 见 app/data/gold.py）。只声明了某个品种能力的源，只会收到那个品种。"""
+        ...
+
+    async def gold_intraday(self, code: str) -> GoldIntraday:
+        """当前交易日的分时（目前只有上金所 Au99.99）。"""
+        ...
+
+    async def gold_quote(self, code: str) -> GoldQuote:
+        """实时报价（目前只有伦敦金；上金所的报价由分时和日线拼出来）。"""
         ...

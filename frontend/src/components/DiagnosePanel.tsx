@@ -149,6 +149,7 @@ export function DiagnosePanel() {
 
           <Advice result={result} />
           <EtfAdvice result={result} />
+          <GoldAdvice result={result} />
         </div>
       )}
     </div>
@@ -394,6 +395,53 @@ function EtfAdvice({ result }: { result: Diagnosis }) {
       <br />
       <br />
       {expectedNote}
+    </Tip>
+  );
+}
+
+/** 金价也单独一句：它的数据来自上金所官网和新浪外盘，和股票那几个站点无关。 */
+function GoldAdvice({ result }: { result: Diagnosis }) {
+  const real = result.providers.filter((p) => p.provider !== "mock");
+  const ok = new Set<string>();
+  let probed = false;
+  for (const p of real) {
+    for (const i of p.interfaces) {
+      if (i.name.startsWith("金价")) probed = true;
+      if (i.status === "正常") ok.add(i.name);
+    }
+  }
+  if (!probed) return null; // 老版本后端没有金价探测
+
+  const short = (name: string) => name.replace(/^金价·/, "");
+  const sge = ["金价·上金所日线", "金价·上金所分时"].filter((n) => !ok.has(n));
+  const london = ["金价·伦敦金行情", "金价·伦敦金日线"].filter((n) => !ok.has(n));
+
+  if (sge.length === 0 && london.length === 0) {
+    return (
+      <Tip tone="ok">
+        <strong>金价正常</strong>：上金所 Au99.99 和伦敦金都能取到。
+      </Tip>
+    );
+  }
+  return (
+    <Tip tone="warn">
+      {sge.length > 0 && (
+        <>
+          <strong>上金所金价取不到 {sge.map(short).join("、")}</strong>
+          {"：数据来自上海黄金交易所官网，先看上面主机探测里 "}
+          <code>www.sge.com.cn</code> 通不通。
+          <br />
+        </>
+      )}
+      {london.length > 0 && (
+        <>
+          <strong>伦敦金取不到 {london.map(short).join("、")}</strong>
+          {"：数据来自新浪，报价看 "}
+          <code>hq.sinajs.cn</code>，日线看 <code>stock2.finance.sina.com.cn</code>。
+          <br />
+        </>
+      )}
+      只影响「金价」页和首页的金价卡片，股票、ETF 不受影响。
     </Tip>
   );
 }

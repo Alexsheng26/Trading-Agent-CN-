@@ -1,6 +1,6 @@
 "use client";
 
-// 首页：大盘 + 自选股。手机上是卡片列表，桌面上是表格。
+// 首页：大盘 + 金价 + 自选股。手机上是卡片列表，桌面上是表格。
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -10,9 +10,9 @@ import { StockSearch } from "@/components/StockSearch";
 import { api } from "@/lib/api";
 import { changeColor, fmtClock, fmtMoney, fmtNum, fmtPct } from "@/lib/format";
 import { isEtfSymbol, priceDecimals } from "@/lib/symbols";
-import { useLiveIndexes, useLiveQuotes } from "@/lib/useLiveQuote";
+import { useLiveGold, useLiveIndexes, useLiveQuotes } from "@/lib/useLiveQuote";
 import { codeOf } from "@/lib/useWatchlistCodes";
-import type { Quote, StockBasic, WatchlistItem } from "@/lib/types";
+import type { GoldItem, Quote, StockBasic, WatchlistItem } from "@/lib/types";
 
 export default function HomePage() {
   const router = useRouter();
@@ -25,6 +25,8 @@ export default function HomePage() {
   const live = useLiveQuotes(symbols);
   const market = useLiveIndexes();
   const indexes = market.indexes;
+  // 金价跟在大盘指数后面，点进去是金价页（分时、日K、周K）
+  const gold = useLiveGold();
 
   // 实时价格覆盖数据库里那份快照，取不到时退回快照，不让列表变空
   const rows = useMemo(
@@ -92,7 +94,7 @@ export default function HomePage() {
         </div>
       )}
 
-      {indexes.length > 0 && (
+      {(indexes.length > 0 || gold.items.length > 0) && (
         <div className="no-scrollbar -mx-4 mb-4 flex gap-2 overflow-x-auto px-4 md:mx-0 md:px-0">
           {indexes.map((idx) => (
             <div
@@ -105,6 +107,9 @@ export default function HomePage() {
                 {fmtPct(idx.change_pct)}
               </div>
             </div>
+          ))}
+          {gold.items.map((item) => (
+            <GoldTile key={item.code} item={item} />
           ))}
         </div>
       )}
@@ -246,6 +251,40 @@ function WatchCard({
         </svg>
       </button>
     </div>
+  );
+}
+
+/** 金价小卡片：和大盘指数一个样式，左上角一个金色圆点区分；点进去是金价页 */
+function GoldTile({ item }: { item: GoldItem }) {
+  const q = item.quote;
+  return (
+    <Link
+      href={`/gold?code=${item.code}`}
+      className="min-w-[7.5rem] shrink-0 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 transition-colors hover:bg-[var(--surface-2)]"
+    >
+      <div className="flex items-center gap-1 text-[11px] text-[var(--muted)]">
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--gold)]" aria-hidden="true" />
+        <span className="truncate">{item.short_name}</span>
+      </div>
+      {q ? (
+        <>
+          <div className="tabular mt-0.5 whitespace-nowrap text-sm font-medium">
+            {fmtNum(q.price, item.decimals)}
+            <span className="ml-1 text-[10px] font-normal text-[var(--muted)]">{item.unit}</span>
+          </div>
+          <div className={`tabular text-[11px] ${changeColor(q.change_pct)}`}>
+            {fmtPct(q.change_pct)}
+            {/* 分时取不到、用的是收盘价时要标出来 */}
+            {!q.is_realtime && <span className="ml-1 text-[var(--warn)]">收盘价</span>}
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="mt-0.5 text-sm text-[var(--muted)]">—</div>
+          <div className="text-[11px] text-[var(--muted)]">暂时取不到</div>
+        </>
+      )}
+    </Link>
   );
 }
 

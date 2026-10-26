@@ -12,7 +12,7 @@ import math
 import random
 from datetime import date, datetime, time, timedelta
 
-from app.core.clock import now_utc
+from app.core.clock import now_cst, now_utc
 from app.core.errors import CapabilityNotSupported
 from app.data.base import (
     ALL_CAPABILITIES,
@@ -20,11 +20,21 @@ from app.data.base import (
     FinancialReport,
     FundHolding,
     FundProfile,
+    GoldIntraday,
+    GoldQuote,
     IndexQuote,
     MoneyFlow,
     NewsItem,
     Quote,
     StockBasic,
+)
+from app.data.gold import (
+    LONDON_XAU,
+    SGE_AU9999,
+    arrange_sge_grid,
+    previous_business_day,
+    sge_slots,
+    sge_trading_day,
 )
 from app.data.symbols import Symbol, normalize
 
@@ -344,6 +354,96 @@ class MockProvider:
         ]
 
 
+    # ---------------- 黄金 ----------------
+
+    #: 模拟金价：锚点那天的价格、趋势线每天的增长率（年化约 15%）。
+    #: 价格围着趋势线上下波动（均值回复），几年下来不会漂到离谱的位置
+    _GOLD_TREND = {SGE_AU9999: (390.0, 0.00042), LONDON_XAU: (1900.0, 0.00037)}
+
+    def _gold_walk(self, code: str, end: date) -> list[Bar]:
+        """从固定锚点走到 `end`，结果只取决于 (code, end)。上金所没有成交量，这里也不给。"""
+        if code not in self._GOLD_TREND:
+            raise CapabilityNotSupported(f"模拟数据没有 {code}")
+        start_price, growth = self._GOLD_TREND[code]
+        rng = random.Random(f"gold:{code}:bars")
+        bars: list[Bar] = []
+        prev_close = start_price
+        deviation = 0.0  # 偏离趋势线多少（对数）
+        cursor = self._ANCHOR
+        while cursor <= end:
+            if cursor.weekday() >= 5:
+                cursor += timedelta(days=1)
+                continue
+            deviation = 0.98 * deviation + rng.gauss(0, 0.009)
+            trend = start_price * math.exp(growth * (cursor - self._ANCHOR).days)
+            close = round(trend * math.exp(deviation), 2)
+            open_ = round(prev_close * (1 + rng.gauss(0, 0.002)), 2)
+            high = round(max(open_, close) * (1 + abs(rng.gauss(0, 0.003))), 2)
+            low = round(min(open_, close) * (1 - abs(rng.gauss(0, 0.003))), 2)
+            bars.append(
+                Bar(
+                    date=cursor,
+                    open=open_,
+                    high=high,
+                    low=low,
+                    close=close,
+                    volume=0.0 if code == SGE_AU9999 else round(rng.uniform(1e5, 3e5), 0),
+                    change_pct=round((close / prev_close - 1) * 100, 2),
+                )
+            )
+            prev_close = close
+            cursor += timedelta(days=1)
+        return bars
+
+    async def gold_bars(self, code: str, start: date, end: date) -> list[Bar]:
+        if code == SGE_AU9999:
+            # 和真的上金所一样：当前交易日的日线要收盘后才有，盘中由分时合成
+            end = min(end, previous_business_day(sge_trading_day(_now_naive())))
+        return [b for b in self._gold_walk(code, end) if start <= b.date <= end]
+
+    async def gold_intraday(self, code: str) -> GoldIntraday:
+        """按上金所的网格造一天的分时，再走一遍真实数据用的整理逻辑。"""
+        if code != SGE_AU9999:
+            raise CapabilityNotSupported("模拟数据只有上金所的分时")
+        as_of = _now_naive()
+        trading_day = sge_trading_day(as_of)
+        history = await self.gold_bars(code, trading_day - timedelta(days=20), trading_day)
+        prev_close = history[-1].close if history else self._GOLD_TREND[code][0]
+
+        rng = random.Random(f"gold:{code}:intraday:{trading_day.isoformat()}")
+        slots = sge_slots()
+        prices: list[float] = []
+        price = prev_close
+        for _ in slots:
+            price = round(price * (1 + rng.gauss(0, 0.0005)), 2)
+            prices.append(price)
+        session = arrange_sge_grid([t.strftime("%H:%M") for t in slots], prices, as_of)
+        return GoldIntraday(
+            code=code,
+            trading_day=session.trading_day,
+            as_of=as_of,
+            points=session.points,
+            prev_close=prev_close,
+        )
+
+    async def gold_quote(self, code: str) -> GoldQuote:
+        if code != LONDON_XAU:
+            raise CapabilityNotSupported("模拟数据的实时报价只有伦敦金")
+        today = date.today()
+        bars = await self.gold_bars(code, today - timedelta(days=10), today)
+        last, prev = bars[-1], bars[-2]
+        return GoldQuote(
+            code=code,
+            price=last.close,
+            prev_close=prev.close,
+            change=round(last.close - prev.close, 2),
+            change_pct=round((last.close / prev.close - 1) * 100, 2),
+            open=last.open,
+            high=last.high,
+            low=last.low,
+            as_of=_now_naive(),
+        )
+
     # ---------------- ETF ----------------
 
     async def etf_list(self) -> list[StockBasic]:
@@ -389,6 +489,11 @@ class MockProvider:
             FundHolding(code=code, name=name, weight_pct=w, period=period)
             for (code, name), w in zip(pool[:10], weights, strict=True)
         ]
+
+
+def _now_naive() -> datetime:
+    """当前北京时间（不带时区，精确到分钟）—— 和真实数据源给的时刻同一种写法。"""
+    return now_cst().replace(tzinfo=None, second=0, microsecond=0)
 
 
 def _previous_report_period(today: date, offset: int) -> date:
